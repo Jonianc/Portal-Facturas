@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.3.0] - 2026-02-16
+### Added
+- Se agrega un selector visible en el portal para alternar entre vista de **Listado** y **Mensual** desde la cabecera.
+
+### Changed
+- Se mejora la navegación de la vista mensual conservando filtros al cambiar de vista y usando el mes actual por defecto.
+- Se actualiza la versión del plugin de `1.2.0` a `1.3.0`.
+
 ## [1.2.0] - 2026-02-16
 ### Changed
 - Mejora integral UI/UX del portal frontend standalone: nueva jerarquía visual, filtros en bloque, tarjetas de resumen, botones más claros y mejor adaptación móvil.

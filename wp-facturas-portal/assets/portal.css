@@ -5,6 +5,10 @@
 .wpfp-actions{display:flex;align-items:center;gap:8px}
 .wpfp-link{font-size:14px;text-decoration:none;border:1px solid #d8dde6;background:#fff;border-radius:10px;padding:8px 12px;color:#111}
 
+.wpfp-view-switch{display:inline-flex;align-items:center;gap:4px;padding:4px;border:1px solid #d8dde6;border-radius:12px;background:#fff}
+.wpfp-switch{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;color:#374151}
+.wpfp-switch:hover{background:#f3f4f6}
+.wpfp-switch.is-active{background:#111;color:#fff}
 .wpfp-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:8px 0 12px;padding:12px;border:1px solid #e8ebf0;background:#fff;border-radius:14px}
 .wpfp-filters select,.wpfp-filters input{width:100%;padding:10px 12px;border:1px solid #d8dde6;border-radius:10px;font-size:14px;background:#fff;min-height:40px}
 .wpfp-filters button,.wpfp-reset{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 14px;border-radius:10px;font-size:14px;text-decoration:none}

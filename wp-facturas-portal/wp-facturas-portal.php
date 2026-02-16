@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.2.0';
+    const VERSION = '1.3.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -611,6 +611,12 @@ class WPFPP_Facturas_Portal {
             $next_ym = $n->format('Y-m');
         }
 
+        $list_url = remove_query_arg(['view', 'ym']);
+        $monthly_url = add_query_arg([
+            'view' => 'monthly',
+            'ym' => $ym ?: wp_date('Y-m', current_time('timestamp')),
+        ], remove_query_arg(['view']));
+
         ob_start();
         ?>
         <div class="wpfp-portal">
@@ -620,6 +626,10 @@ class WPFPP_Facturas_Portal {
                     <div class="wpfp-subtitle">Portal standalone (sin theme) para revisión y asignación de facturas.</div>
                 </div>
                 <div class="wpfp-actions">
+                    <div class="wpfp-view-switch" role="tablist" aria-label="Cambiar vista de facturas">
+                        <a class="wpfp-switch <?php echo ($view === 'list') ? 'is-active' : ''; ?>" href="<?php echo esc_url($list_url); ?>" role="tab" aria-selected="<?php echo ($view === 'list') ? 'true' : 'false'; ?>">Listado</a>
+                        <a class="wpfp-switch <?php echo ($view === 'monthly') ? 'is-active' : ''; ?>" href="<?php echo esc_url($monthly_url); ?>" role="tab" aria-selected="<?php echo ($view === 'monthly') ? 'true' : 'false'; ?>">Mensual</a>
+                    </div>
                     <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout','1')); ?>">Salir</a>
                 </div>
             </div>
