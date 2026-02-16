@@ -13,6 +13,7 @@ class WPFPP_Facturas_Portal {
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
+    const LEGACY_USER_KEY = '__legacy__';
 
     public static function init() {
         register_activation_hook(__FILE__, [__CLASS__, 'activate']);
@@ -126,6 +127,18 @@ class WPFPP_Facturas_Portal {
             $out[$u['key']] = $u['name'];
         }
         return $out;
+    }
+
+    private static function legacy_portal_user() {
+        $settings = self::settings();
+        if (empty($settings['password_hash'])) return null;
+
+        return [
+            'key' => self::LEGACY_USER_KEY,
+            'name' => 'Acceso general',
+            'password_hash' => (string)$settings['password_hash'],
+            'legacy' => true,
+        ];
     }
 
     private static function parse_users_raw($raw) {
@@ -670,11 +683,13 @@ class WPFPP_Facturas_Portal {
             ? 'proveedor ASC, fecha_factura DESC, created_at DESC'
             : 'proveedor ASC, created_at DESC';
 
+        $is_legacy_login = !empty($portal_user['legacy']);
+
         $rows = self::get_facturas([
             'estado' => $estado,
             'proveedor' => $proveedor,
             'q' => $q,
-            'usuario_portal' => $portal_user['key'],
+            'usuario_portal' => $is_legacy_login ? '' : $portal_user['key'],
             'limit' => 800,
             'order' => $order,
             'date_from' => $date_from,
@@ -682,7 +697,7 @@ class WPFPP_Facturas_Portal {
             'include_no_date' => $include_no_date,
         ]);
 
-        $proveedores = self::get_proveedores($estado, $date_from, $date_to, $include_no_date, $portal_user['key']);
+        $proveedores = self::get_proveedores($estado, $date_from, $date_to, $include_no_date, $is_legacy_login ? '' : $portal_user['key']);
 
         // Totales de la vista actual
         $total_count = is_array($rows) ? count($rows) : 0;
@@ -933,13 +948,19 @@ class WPFPP_Facturas_Portal {
         if (!hash_equals($calc, $sig)) return null;
         $payload_json = self::b64url_decode($b64);
         $payload = json_decode($payload_json, true);
-        if (!is_array($payload) || empty($payload['exp']) || empty($payload['usr'])) return null;
+        if (!is_array($payload) || empty($payload['exp']) || !array_key_exists('usr', $payload)) return null;
         if ((int)$payload['exp'] < time()) return null;
 
         $users = self::portal_users();
         $uk = self::normalize_user_key($payload['usr']);
-        if ($uk === '' || empty($users[$uk])) return null;
-        return $users[$uk];
+        if ($uk === '') return null;
+        if (!empty($users[$uk])) return $users[$uk];
+
+        if (empty($users) && $uk === self::LEGACY_USER_KEY) {
+            return self::legacy_portal_user();
+        }
+
+        return null;
     }
 
     private static function is_portal_authed() {
@@ -963,6 +984,13 @@ class WPFPP_Facturas_Portal {
         $users = self::portal_users();
         foreach ($users as $u) {
             if (wp_check_password($pass, $u['password_hash'])) return $u;
+        }
+
+        if (empty($users)) {
+            $legacy_user = self::legacy_portal_user();
+            if ($legacy_user && wp_check_password($pass, $legacy_user['password_hash'])) {
+                return $legacy_user;
+            }
         }
 
         return false;
@@ -1008,7 +1036,12 @@ class WPFPP_Facturas_Portal {
         if (!$row) wp_send_json_error(['message'=>'No existe'], 404);
 
         $portal_user = self::current_portal_user();
-        if (!$portal_user || $row->usuario_portal !== $portal_user['key']) {
+        if (!$portal_user) {
+            wp_send_json_error(['message'=>'No autorizado para esta factura'], 403);
+        }
+
+        $is_legacy_login = !empty($portal_user['legacy']);
+        if (!$is_legacy_login && $row->usuario_portal !== $portal_user['key']) {
             wp_send_json_error(['message'=>'No autorizado para esta factura'], 403);
         }
 
