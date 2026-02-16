@@ -4,7 +4,7 @@ Plugin de WordPress para gestionar facturas en un portal protegido por contrase�
 
 ## Versión
 
-`1.0.3`
+`1.0.4`
 
 ## Instalación
 

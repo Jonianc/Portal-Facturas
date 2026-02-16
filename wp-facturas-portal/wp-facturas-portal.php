@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.0.3';
+    const VERSION = '1.0.4';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -673,6 +673,8 @@ class WPFPP_Facturas_Portal {
                 <div><strong><?php echo number_format($total_monto, 0, ',', '.'); ?></strong> CLP (suma vista)</div>
             </div>
 
+            <div class="wpfp-save-status" aria-live="polite">Sin cambios pendientes.</div>
+
             <div class="wpfp-hint">
                 Escribe una observación y presiona <strong>Guardar</strong>. Al guardar, la factura pasa a <strong>Asignado</strong> automáticamente.
             </div>
@@ -704,17 +706,17 @@ class WPFPP_Facturas_Portal {
                             $pdf = $r->pdf_url ? '<a href="'.esc_url($r->pdf_url).'" target="_blank" rel="noopener">Abrir PDF</a>' : '—';
                             $monto = is_null($r->monto) ? '—' : number_format((float)$r->monto, 0, ',', '.').' '.esc_html($r->moneda);
                             ?>
-                            <tr data-id="<?php echo (int)$r->id; ?>">
-                                <td class="wpfp-cell-proveedor"><?php echo esc_html($r->proveedor); ?></td>
-                                <td><?php echo esc_html($r->folio); ?></td>
-                                <td><?php echo esc_html($r->fecha_factura ? $r->fecha_factura : '—'); ?></td>
-                                <td><?php echo esc_html($monto); ?></td>
-                                <td><?php echo $pdf; ?></td>
-                                <td>
-                                    <input type="text" class="wpfp-obs" value="<?php echo esc_attr((string)$r->observacion); ?>" placeholder="Escribe aquí..." />
+                            <tr class="wpfp-row" data-id="<?php echo (int)$r->id; ?>" data-dirty="0">
+                                <td class="wpfp-cell-proveedor" data-label="Proveedor"><?php echo esc_html($r->proveedor); ?></td>
+                                <td data-label="Folio"><?php echo esc_html($r->folio); ?></td>
+                                <td data-label="Fecha"><?php echo esc_html($r->fecha_factura ? $r->fecha_factura : '—'); ?></td>
+                                <td data-label="Monto"><?php echo esc_html($monto); ?></td>
+                                <td data-label="PDF"><?php echo $pdf; ?></td>
+                                <td data-label="Observación">
+                                    <input type="text" class="wpfp-obs" value="<?php echo esc_attr((string)$r->observacion); ?>" placeholder="Escribe aquí..." data-initial="<?php echo esc_attr((string)$r->observacion); ?>" />
                                 </td>
-                                <td><span class="wpfp-badge wpfp-<?php echo esc_attr($r->estado); ?>"><?php echo esc_html(ucfirst($r->estado)); ?></span></td>
-                                <td>
+                                <td data-label="Estado"><span class="wpfp-badge wpfp-<?php echo esc_attr($r->estado); ?>"><?php echo esc_html(ucfirst($r->estado)); ?></span></td>
+                                <td data-label="Acción">
                                     <button type="button" class="wpfp-save">Guardar</button>
                                 </td>
                             </tr>
