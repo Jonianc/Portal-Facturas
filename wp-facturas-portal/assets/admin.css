@@ -1,0 +1,9 @@
+.wpfp-filters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+.wpfp-filters select,.wpfp-filters input{min-height:36px}
+.wpfp-bulk{display:flex;gap:8px;align-items:center;margin:10px 0}
+.wpfp-table .wpfp-badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px}
+.wpfp-table .wpfp-pendiente{background:#fff5f5;border:1px solid #ffd1d1}
+.wpfp-table .wpfp-asignado{background:#f3fff5;border:1px solid #bfe9c5}
+.wpfp-table .wpfp-duda{background:#fffaf0;border:1px solid #ffe0a6}
+.wpfp-table .wpfp-cargada{background:#f1f3f5;border:1px solid #d5d9dd}
+.wpfp-form input.large-text{width:520px;max-width:100%}
