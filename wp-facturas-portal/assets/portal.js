@@ -80,4 +80,9 @@
       saveRow($(this).closest('tr'));
     }
   });
+
+  $(document).on('change', '[data-wpfp-autosubmit="month"]', function(){
+    var form = this.form;
+    if(form) form.submit();
+  });
 })(jQuery);

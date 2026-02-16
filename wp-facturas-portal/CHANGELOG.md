@@ -2,6 +2,16 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.4.0] - 2026-02-16
+### Added
+- La vista mensual incorpora un bloque de resumen por estado (Pendiente, Asignado, Duda y Cargada) para lectura rápida del mes filtrado.
+- Se agrega acceso rápido a **Mes actual** y etiqueta textual del mes activo en los controles de navegación mensual.
+
+### Changed
+- En vista mensual se excluyen facturas sin `fecha_factura` para que el corte mensual sea consistente.
+- Se mejora la UX del selector mensual con autoenvío al cambiar el input de mes.
+- Se actualiza la versión del plugin de `1.3.0` a `1.4.0`.
+
 ## [1.3.0] - 2026-02-16
 ### Added
 - Se agrega un selector visible en el portal para alternar entre vista de **Listado** y **Mensual** desde la cabecera.

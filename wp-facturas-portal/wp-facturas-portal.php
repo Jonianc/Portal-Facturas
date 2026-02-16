@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.3.0';
+    const VERSION = '1.4.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -555,9 +555,11 @@ class WPFPP_Facturas_Portal {
         $date_from = null;
         $date_to = null;
         $ym = null;
+        $month_label = '';
         $include_no_date = true;
 
         if ($view === 'monthly') {
+            $include_no_date = false;
             $ym = isset($_GET['ym']) ? sanitize_text_field($_GET['ym']) : '';
             if (!preg_match('/^\d{4}-\d{2}$/', $ym)) {
                 $ym = wp_date('Y-m', current_time('timestamp'));
@@ -573,6 +575,7 @@ class WPFPP_Facturas_Portal {
             $dt2 = clone $dt;
             $dt2->modify('first day of next month');
             $date_to = $dt2->format('Y-m-d');
+            $month_label = wp_date('F Y', $dt->getTimestamp());
         }
 
         $order = ($view === 'monthly')
@@ -595,11 +598,18 @@ class WPFPP_Facturas_Portal {
         // Totales de la vista actual
         $total_count = is_array($rows) ? count($rows) : 0;
         $total_monto = 0.0;
+        $state_totals = ['pendiente'=>0, 'asignado'=>0, 'duda'=>0, 'cargada'=>0];
+        $providers_in_view = [];
+
         if ($rows) {
             foreach ($rows as $r) {
                 if (!is_null($r->monto)) $total_monto += (float)$r->monto;
+                if (isset($state_totals[$r->estado])) $state_totals[$r->estado]++;
+                if (!empty($r->proveedor)) $providers_in_view[$r->proveedor] = true;
             }
         }
+
+        $providers_count = count($providers_in_view);
 
         // Prev/next mes (solo monthly)
         $prev_ym = $next_ym = '';
@@ -646,8 +656,10 @@ class WPFPP_Facturas_Portal {
                 <?php if ($view === 'monthly'): ?>
                     <div class="wpfp-monthbar">
                         <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>" aria-label="Mes anterior">◀</a>
-                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" />
+                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" data-wpfp-autosubmit="month" />
                         <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>" aria-label="Mes siguiente">▶</a>
+                        <a class="wpfp-chip" href="<?php echo esc_url(add_query_arg(['ym'=>wp_date('Y-m', current_time('timestamp'))])); ?>">Mes actual</a>
+                        <span class="wpfp-monthlabel"><?php echo esc_html($month_label); ?></span>
                     </div>
                 <?php endif; ?>
 
@@ -676,8 +688,18 @@ class WPFPP_Facturas_Portal {
             <div class="wpfp-summary">
                 <div class="wpfp-card"><span>Total en vista</span><strong><?php echo (int)$total_count; ?></strong></div>
                 <div class="wpfp-card"><span>Suma estimada</span><strong><?php echo number_format($total_monto, 0, ',', '.'); ?> CLP</strong></div>
+                <div class="wpfp-card"><span>Proveedores en vista</span><strong><?php echo (int)$providers_count; ?></strong></div>
                 <div class="wpfp-card"><span>Acción rápida</span><strong>Enter = Guardar fila</strong></div>
             </div>
+
+            <?php if ($view === 'monthly'): ?>
+            <div class="wpfp-state-summary" aria-label="Resumen por estado del mes">
+                <span class="wpfp-state-item is-pendiente">Pendiente: <strong><?php echo (int)$state_totals['pendiente']; ?></strong></span>
+                <span class="wpfp-state-item is-asignado">Asignado: <strong><?php echo (int)$state_totals['asignado']; ?></strong></span>
+                <span class="wpfp-state-item is-duda">Duda: <strong><?php echo (int)$state_totals['duda']; ?></strong></span>
+                <span class="wpfp-state-item is-cargada">Cargada: <strong><?php echo (int)$state_totals['cargada']; ?></strong></span>
+            </div>
+            <?php endif; ?>
 
             <div class="wpfp-hint">
                 Escribe una observación y presiona <strong>Guardar</strong>. Al guardar, la factura pasa a <strong>Asignado</strong> automáticamente.
