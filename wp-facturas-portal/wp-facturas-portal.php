@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.4.0';
+    const VERSION = '1.5.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -865,6 +865,43 @@ class WPFPP_Facturas_Portal {
         return wp_check_password($pass, $settings['password_hash']);
     }
 
+    private static function state_transition_payload($current, $new_estado, $actor = 'Admin') {
+        $now = current_time('mysql');
+
+        $assigned_at = $current->assigned_at;
+        $assigned_by = $current->assigned_by;
+        $loaded_at = $current->loaded_at;
+        $loaded_by = $current->loaded_by;
+
+        if ($new_estado === 'pendiente') {
+            $assigned_at = null;
+            $assigned_by = null;
+            $loaded_at = null;
+            $loaded_by = null;
+        }
+
+        if ($new_estado === 'asignado' || $new_estado === 'duda') {
+            if (!$assigned_at) $assigned_at = $now;
+            if (!$assigned_by) $assigned_by = $actor;
+            $loaded_at = null;
+            $loaded_by = null;
+        }
+
+        if ($new_estado === 'cargada') {
+            if (!$assigned_at) $assigned_at = $now;
+            if (!$assigned_by) $assigned_by = $actor;
+            if (!$loaded_at) $loaded_at = $now;
+            if (!$loaded_by) $loaded_by = $actor;
+        }
+
+        return [
+            'assigned_at' => $assigned_at,
+            'assigned_by' => $assigned_by,
+            'loaded_at' => $loaded_at,
+            'loaded_by' => $loaded_by,
+        ];
+    }
+
     /* ------------------------------
      * AJAX: update observacion -> auto estado asignado
      * ------------------------------ */
@@ -887,18 +924,20 @@ class WPFPP_Facturas_Portal {
             wp_send_json_error(['message'=>'Esta factura está marcada como Cargada.'], 409);
         }
 
-        $now = current_time('mysql');
+        $new_estado = trim($obs) !== ''
+            ? (($row->estado === 'duda') ? 'duda' : 'asignado')
+            : 'pendiente';
 
-        $new_estado = trim($obs) !== '' ? 'asignado' : 'pendiente';
-        $assigned_at = trim($obs) !== '' ? $now : null;
-        $assigned_by = trim($obs) !== '' ? 'Cliente' : null;
+        $state_meta = self::state_transition_payload($row, $new_estado, 'Cliente');
 
         $updated = $wpdb->update($table, [
             'observacion' => $obs,
             'estado' => $new_estado,
-            'assigned_at' => $assigned_at,
-            'assigned_by' => $assigned_by,
-        ], ['id' => $id], ['%s','%s','%s','%s'], ['%d']);
+            'assigned_at' => $state_meta['assigned_at'],
+            'assigned_by' => $state_meta['assigned_by'],
+            'loaded_at' => $state_meta['loaded_at'],
+            'loaded_by' => $state_meta['loaded_by'],
+        ], ['id' => $id], ['%s','%s','%s','%s','%s','%s'], ['%d']);
 
         if ($updated === false) wp_send_json_error(['message'=>'No se pudo guardar'], 500);
 
@@ -972,37 +1011,12 @@ class WPFPP_Facturas_Portal {
         $estado_in = sanitize_text_field($data['estado'] ?? $current->estado);
         $estado = in_array($estado_in, $allowed_states, true) ? $estado_in : (string)$current->estado;
 
-        $now = current_time('mysql');
-
-        // Timestamps según estado (admin puede forzar estados)
-        $assigned_at = $current->assigned_at;
-        $assigned_by = $current->assigned_by;
-        $loaded_at = $current->loaded_at;
-        $loaded_by = $current->loaded_by;
-
-        if ($estado === 'asignado') {
-            if (!$assigned_at) $assigned_at = $now;
-            if (!$assigned_by) $assigned_by = 'Admin';
-        } elseif ($estado === 'pendiente' || $estado === 'duda') {
-            // Reabrir
-            $assigned_at = null;
-            $assigned_by = null;
-            if ($estado !== 'cargada') {
-                $loaded_at = null;
-                $loaded_by = null;
-            }
-        }
-
-        if ($estado === 'cargada') {
-            if (!$loaded_at) $loaded_at = $now;
-            if (!$loaded_by) $loaded_by = 'Admin';
-        } else {
-            // Si sale de cargada, limpia cargada
-            if ($current->estado === 'cargada') {
-                $loaded_at = null;
-                $loaded_by = null;
-            }
-        }
+        // Timestamps consistentes según estado
+        $state_meta = self::state_transition_payload($current, $estado, 'Admin');
+        $assigned_at = $state_meta['assigned_at'];
+        $assigned_by = $state_meta['assigned_by'];
+        $loaded_at = $state_meta['loaded_at'];
+        $loaded_by = $state_meta['loaded_by'];
 
         $updated = $wpdb->update($table, [
             'proveedor' => $proveedor,
@@ -1111,7 +1125,7 @@ class WPFPP_Facturas_Portal {
         if (!$ids) return;
         $in = implode(',', array_fill(0, count($ids), '%d'));
         $now = current_time('mysql');
-        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='cargada', loaded_at=%s, loaded_by=%s WHERE id IN ($in)", array_merge([$now, 'Admin'], $ids)));
+        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='cargada', assigned_at=COALESCE(assigned_at,%s), assigned_by=COALESCE(NULLIF(assigned_by,''),%s), loaded_at=%s, loaded_by=%s WHERE id IN ($in)", array_merge([$now, 'Admin', $now, 'Admin'], $ids)));
     }
 
     private static function mark_pending($ids) {
@@ -1120,7 +1134,7 @@ class WPFPP_Facturas_Portal {
         $ids = array_filter(array_map('intval', $ids));
         if (!$ids) return;
         $in = implode(',', array_fill(0, count($ids), '%d'));
-        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='pendiente' WHERE id IN ($in)", $ids));
+        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='pendiente', assigned_at=NULL, assigned_by=NULL, loaded_at=NULL, loaded_by=NULL WHERE id IN ($in)", $ids));
     }
 
     private static function delete_facturas($ids) {

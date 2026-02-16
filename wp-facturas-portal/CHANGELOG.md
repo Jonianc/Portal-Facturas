@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.5.0] - 2026-02-16
+### Changed
+- Se normaliza la lógica de transiciones de estado (`pendiente`, `asignado`, `duda`, `cargada`) para mantener consistentes `assigned_*` y `loaded_*` en edición admin y en portal.
+- En el portal, al guardar observación una factura en estado `duda` conserva ese estado (si la observación no queda vacía) y solo vuelve a `pendiente` cuando se limpia.
+- Las acciones masivas ahora sincronizan metadatos de estado: `Marcar como Cargada` completa también asignación faltante y `Marcar como Pendiente` limpia asignación/carga.
+- Se actualiza la versión del plugin de `1.4.0` a `1.5.0`.
+
 ## [1.4.0] - 2026-02-16
 ### Added
 - La vista mensual incorpora un bloque de resumen por estado (Pendiente, Asignado, Duda y Cargada) para lectura rápida del mes filtrado.
