@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.6.0] - 2026-02-16
+### Changed
+- Se simplifica el plugin para trabajar solo con dos estados: `pendiente` y `asignado`.
+- Se eliminan `duda` y `cargada` de filtros, formularios de edición, opciones de ajustes, resumen mensual y badges del portal.
+- Se ajustan transiciones y acciones masivas para el nuevo modelo de estados (sin operaciones de cargado).
+- Se actualiza la versión del plugin de `1.5.0` a `1.6.0`.
+
 ## [1.5.0] - 2026-02-16
 ### Changed
 - Se normaliza la lógica de transiciones de estado (`pendiente`, `asignado`, `duda`, `cargada`) para mantener consistentes `assigned_*` y `loaded_*` en edición admin y en portal.
