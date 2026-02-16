@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.0.3
+ * Version: 1.1.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.0.3';
+    const VERSION = '1.1.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -19,10 +19,7 @@ class WPFPP_Facturas_Portal {
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
 
-        add_shortcode('wp_facturas_portal', [__CLASS__, 'shortcode_portal']);
-        add_action('template_redirect', [__CLASS__, 'maybe_render_blank_portal']);
-
-        add_action('wp_enqueue_scripts', [__CLASS__, 'enqueue_assets']);
+        add_action('template_redirect', [__CLASS__, 'maybe_render_standalone_portal']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'admin_assets']);
 
         add_action('wp_ajax_nopriv_wpfp_update_factura', [__CLASS__, 'ajax_update_factura']);
@@ -149,20 +146,6 @@ class WPFPP_Facturas_Portal {
         wp_enqueue_style('wpfp-admin', plugins_url('assets/admin.css', __FILE__), [], self::VERSION);
     }
 
-    public static function enqueue_assets() {
-        if (!is_singular()) return;
-        global $post;
-        if (!$post || !has_shortcode($post->post_content, 'wp_facturas_portal')) return;
-
-        wp_enqueue_style('wpfp-portal', plugins_url('assets/portal.css', __FILE__), [], self::VERSION);
-        wp_enqueue_script('wpfp-portal', plugins_url('assets/portal.js', __FILE__), ['jquery'], self::VERSION, true);
-
-        wp_localize_script('wpfp-portal', 'WPFPP', [
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('wpfp_portal_nonce'),
-        ]);
-    }
-
     /* ------------------------------
      * Admin: Listado
      * ------------------------------ */
@@ -269,7 +252,8 @@ class WPFPP_Facturas_Portal {
         echo '</tbody></table>';
         echo '</form>';
 
-        echo '<p style="margin-top:14px;">Shortcode del portal: <code>[wp_facturas_portal]</code> — Vista mensual sin header/footer: <code>[wp_facturas_portal view="monthly" layout="blank"]</code></p>';
+        $portal_url = add_query_arg('wpfp_portal', '1', home_url('/'));
+        echo '<p style="margin-top:14px;">URL portal standalone: <code>'.esc_html($portal_url).'</code></p>';
         echo '</div>';
 
         // Checkall script small
@@ -455,48 +439,17 @@ class WPFPP_Facturas_Portal {
     }
 
     /* ------------------------------
-     * Blank layout (sin header/footer)
+     * Frontend standalone (sin theme)
      * ------------------------------ */
-    public static function maybe_render_blank_portal() {
+    public static function maybe_render_standalone_portal() {
         if (is_admin()) return;
-        if (!is_singular()) return;
+        if (!isset($_GET['wpfp_portal'])) return;
 
-        global $post;
-        if (!$post || !has_shortcode($post->post_content, 'wp_facturas_portal')) return;
-
-        $shortcodes = self::extract_portal_shortcodes($post->post_content);
-        $use_blank = false;
-        foreach ($shortcodes as $sc_atts) {
-            $layout = isset($sc_atts['layout']) ? strtolower(trim((string)$sc_atts['layout'])) : '';
-            if ($layout === 'blank' || $layout === 'sinheader' || $layout === 'noheader' || $layout === 'noframe') {
-                $use_blank = true;
-                break;
-            }
-        }
-        if (!$use_blank) return;
-
-        // Renderiza solo el contenido del shortcode, sin header/footer del theme
         show_admin_bar(false);
 
-        $title = get_the_title($post);
-        $body = do_shortcode($post->post_content);
-        self::render_blank_page($title, $body);
+        $body = self::render_portal_frontend();
+        self::render_blank_page('Portal Facturas', $body);
         exit;
-    }
-
-    private static function extract_portal_shortcodes($content) {
-        $out = [];
-        if (false === strpos($content, '[wp_facturas_portal')) return $out;
-
-        $pattern = get_shortcode_regex(['wp_facturas_portal']);
-        if (preg_match_all('/' . $pattern . '/s', $content, $m) && !empty($m[3])) {
-            foreach ($m[3] as $attr_str) {
-                $atts = shortcode_parse_atts($attr_str);
-                if (!is_array($atts)) $atts = [];
-                $out[] = $atts;
-            }
-        }
-        return $out;
     }
 
     private static function render_blank_page($title, $body_html) {
@@ -534,14 +487,10 @@ class WPFPP_Facturas_Portal {
     }
 
     /* ------------------------------
-     * Shortcode portal
+     * Frontend portal
      * ------------------------------ */
-    public static function shortcode_portal($atts) {
+    private static function render_portal_frontend() {
         $settings = self::settings();
-        $atts = shortcode_atts([
-            'view' => 'list',     // list | monthly
-            'layout' => 'theme',  // theme | blank (blank se maneja por template_redirect)
-        ], $atts, 'wp_facturas_portal');
 
         // Logout via query param
         if (isset($_GET['wpfp_logout'])) {
@@ -552,7 +501,8 @@ class WPFPP_Facturas_Portal {
             return self::render_login();
         }
 
-        $view = strtolower(trim((string)$atts['view']));
+        $view = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : 'list';
+        $view = strtolower(trim((string)$view));
         if (!in_array($view, ['list','monthly'], true)) $view = 'list';
 
         $estado = isset($_GET['estado']) ? sanitize_text_field($_GET['estado']) : $settings['default_view'];
