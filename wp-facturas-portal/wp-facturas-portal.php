@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.1.0';
+    const VERSION = '1.1.1';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -67,6 +67,7 @@ class WPFPP_Facturas_Portal {
             $settings['password_hash'] = wp_hash_password($plain);
             $settings['session_hours'] = isset($settings['session_hours']) ? (int)$settings['session_hours'] : 12;
             $settings['default_view'] = isset($settings['default_view']) ? sanitize_text_field($settings['default_view']) : 'pendiente';
+            $settings['portal_path'] = isset($settings['portal_path']) ? self::sanitize_portal_path($settings['portal_path']) : '/portal-facturas';
             update_option(self::OPTION_SETTINGS, $settings, false);
             update_option(self::OPTION_PLAIN_PASS, $plain, false);
         }
@@ -79,11 +80,41 @@ class WPFPP_Facturas_Portal {
         return $out;
     }
 
+    private static function sanitize_portal_path($path) {
+        $path = is_string($path) ? trim($path) : '';
+        if ($path === '') return '/portal-facturas';
+
+        $path = wp_parse_url($path, PHP_URL_PATH);
+        $path = is_string($path) ? $path : '';
+        $path = '/' . ltrim($path, '/');
+        $path = preg_replace('#/+#', '/', $path);
+        $path = untrailingslashit($path);
+
+        return $path !== '' ? $path : '/portal-facturas';
+    }
+
+    private static function portal_url() {
+        $settings = self::settings();
+        $path = self::sanitize_portal_path($settings['portal_path'] ?? '/portal-facturas');
+        return add_query_arg('wpfp_portal', '1', home_url($path));
+    }
+
+    private static function is_valid_portal_route_request() {
+        $settings = self::settings();
+        $configured = self::sanitize_portal_path($settings['portal_path'] ?? '/portal-facturas');
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '';
+        $request_path = wp_parse_url($request_uri, PHP_URL_PATH);
+        $request_path = is_string($request_path) ? $request_path : '';
+
+        return untrailingslashit($request_path) === untrailingslashit($configured);
+    }
+
     private static function settings() {
         $defaults = [
             'password_hash' => '',
             'session_hours' => 12,
             'default_view' => 'pendiente',
+            'portal_path' => '/portal-facturas',
         ];
         $s = get_option(self::OPTION_SETTINGS, []);
         if (!is_array($s)) $s = [];
@@ -123,6 +154,7 @@ class WPFPP_Facturas_Portal {
 
         $out['session_hours'] = isset($input['session_hours']) ? max(1, min(72, (int)$input['session_hours'])) : $current['session_hours'];
         $out['default_view']  = isset($input['default_view']) ? sanitize_text_field($input['default_view']) : $current['default_view'];
+        $out['portal_path']   = isset($input['portal_path']) ? self::sanitize_portal_path($input['portal_path']) : $current['portal_path'];
 
         // Cambio de clave
         if (!empty($input['new_password'])) {
@@ -252,8 +284,8 @@ class WPFPP_Facturas_Portal {
         echo '</tbody></table>';
         echo '</form>';
 
-        $portal_url = add_query_arg('wpfp_portal', '1', home_url('/'));
-        echo '<p style="margin-top:14px;">URL portal standalone: <code>'.esc_html($portal_url).'</code></p>';
+        $portal_url = self::portal_url();
+        echo '<p style="margin-top:14px;">URL portal standalone: <a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p>';
         echo '</div>';
 
         // Checkall script small
@@ -420,6 +452,12 @@ class WPFPP_Facturas_Portal {
         }
         echo '</select></td></tr>';
 
+        $portal_url = self::portal_url();
+        echo '<tr><th><label>Ruta de acceso del portal</label></th><td>';
+        printf('<input name="%s[portal_path]" type="text" class="regular-text" value="%s" placeholder="/portal-facturas" />', esc_attr(self::OPTION_SETTINGS), esc_attr($settings['portal_path']));
+        echo '<p class="description">Solo ruta (sin dominio). Ejemplo: <code>/portal-facturas</code>.</p>';
+        echo '<p><a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p></td></tr>';
+
         echo '<tr><th><label>Nueva clave</label></th><td>';
         printf('<input name="%s[new_password]" type="text" class="regular-text" placeholder="Deja vacío para mantener" />', esc_attr(self::OPTION_SETTINGS));
         echo '<p class="description">Al guardar una nueva clave, se elimina la clave temporal almacenada.</p></td></tr>';
@@ -444,6 +482,7 @@ class WPFPP_Facturas_Portal {
     public static function maybe_render_standalone_portal() {
         if (is_admin()) return;
         if (!isset($_GET['wpfp_portal'])) return;
+        if (!self::is_valid_portal_route_request()) return;
 
         show_admin_bar(false);
 
