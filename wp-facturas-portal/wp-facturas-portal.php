@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.0.2';
+    const VERSION = '1.0.3';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
