@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.1.1';
+    const VERSION = '1.1.2';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -96,7 +96,7 @@ class WPFPP_Facturas_Portal {
     private static function portal_url() {
         $settings = self::settings();
         $path = self::sanitize_portal_path($settings['portal_path'] ?? '/portal-facturas');
-        return add_query_arg('wpfp_portal', '1', home_url($path));
+        return home_url($path);
     }
 
     private static function is_valid_portal_route_request() {
@@ -481,7 +481,8 @@ class WPFPP_Facturas_Portal {
      * ------------------------------ */
     public static function maybe_render_standalone_portal() {
         if (is_admin()) return;
-        if (!isset($_GET['wpfp_portal'])) return;
+        $legacy_query_access = isset($_GET['wpfp_portal']);
+        if (!$legacy_query_access && !self::is_valid_portal_route_request()) return;
         if (!self::is_valid_portal_route_request()) return;
 
         show_admin_bar(false);

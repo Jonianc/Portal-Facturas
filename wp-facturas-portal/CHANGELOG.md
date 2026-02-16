@@ -2,6 +2,12 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.1.2] - 2026-02-16
+### Changed
+- Se corrige la URL de acceso del portal configurable para abrir directamente en la ruta guardada, sin requerir `?wpfp_portal=1`.
+- Se mantiene compatibilidad legacy con `?wpfp_portal=1` cuando se usa en la ruta configurada.
+- Se actualiza la versión del plugin de `1.1.1` a `1.1.2`.
+
 ## [1.1.1] - 2026-02-16
 ### Added
 - Nuevo ajuste persistente `portal_path` para definir la ruta de acceso del portal standalone.
