@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.0.2
+ * Version: 1.2.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.0.2';
+    const VERSION = '1.2.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -19,10 +19,7 @@ class WPFPP_Facturas_Portal {
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
 
-        add_shortcode('wp_facturas_portal', [__CLASS__, 'shortcode_portal']);
-        add_action('template_redirect', [__CLASS__, 'maybe_render_blank_portal']);
-
-        add_action('wp_enqueue_scripts', [__CLASS__, 'enqueue_assets']);
+        add_action('template_redirect', [__CLASS__, 'maybe_render_standalone_portal']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'admin_assets']);
 
         add_action('wp_ajax_nopriv_wpfp_update_factura', [__CLASS__, 'ajax_update_factura']);
@@ -70,6 +67,7 @@ class WPFPP_Facturas_Portal {
             $settings['password_hash'] = wp_hash_password($plain);
             $settings['session_hours'] = isset($settings['session_hours']) ? (int)$settings['session_hours'] : 12;
             $settings['default_view'] = isset($settings['default_view']) ? sanitize_text_field($settings['default_view']) : 'pendiente';
+            $settings['portal_path'] = isset($settings['portal_path']) ? self::sanitize_portal_path($settings['portal_path']) : '/portal-facturas';
             update_option(self::OPTION_SETTINGS, $settings, false);
             update_option(self::OPTION_PLAIN_PASS, $plain, false);
         }
@@ -82,11 +80,45 @@ class WPFPP_Facturas_Portal {
         return $out;
     }
 
+    private static function sanitize_portal_path($path) {
+        $path = is_string($path) ? trim($path) : '';
+        if ($path === '') return '/portal-facturas';
+
+        $path = wp_parse_url($path, PHP_URL_PATH);
+        $path = is_string($path) ? $path : '';
+        $path = '/' . ltrim($path, '/');
+        $path = preg_replace('#/+#', '/', $path);
+        $path = untrailingslashit($path);
+
+        return $path !== '' ? $path : '/portal-facturas';
+    }
+
+    private static function portal_url() {
+        $settings = self::settings();
+        $path = self::sanitize_portal_path($settings['portal_path'] ?? '/portal-facturas');
+        return home_url($path);
+    }
+
+    private static function is_valid_portal_route_request() {
+        $settings = self::settings();
+        $configured = self::sanitize_portal_path($settings['portal_path'] ?? '/portal-facturas');
+
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '';
+        $request_path = wp_parse_url($request_uri, PHP_URL_PATH);
+        $request_path = is_string($request_path) ? $request_path : '';
+
+        $portal_abs_path = wp_parse_url(home_url($configured), PHP_URL_PATH);
+        $portal_abs_path = is_string($portal_abs_path) ? $portal_abs_path : $configured;
+
+        return untrailingslashit($request_path) === untrailingslashit($portal_abs_path);
+    }
+
     private static function settings() {
         $defaults = [
             'password_hash' => '',
             'session_hours' => 12,
             'default_view' => 'pendiente',
+            'portal_path' => '/portal-facturas',
         ];
         $s = get_option(self::OPTION_SETTINGS, []);
         if (!is_array($s)) $s = [];
@@ -126,6 +158,7 @@ class WPFPP_Facturas_Portal {
 
         $out['session_hours'] = isset($input['session_hours']) ? max(1, min(72, (int)$input['session_hours'])) : $current['session_hours'];
         $out['default_view']  = isset($input['default_view']) ? sanitize_text_field($input['default_view']) : $current['default_view'];
+        $out['portal_path']   = isset($input['portal_path']) ? self::sanitize_portal_path($input['portal_path']) : $current['portal_path'];
 
         // Cambio de clave
         if (!empty($input['new_password'])) {
@@ -147,20 +180,6 @@ class WPFPP_Facturas_Portal {
     public static function admin_assets($hook) {
         if (strpos($hook, 'wpfp_facturas') === false) return;
         wp_enqueue_style('wpfp-admin', plugins_url('assets/admin.css', __FILE__), [], self::VERSION);
-    }
-
-    public static function enqueue_assets() {
-        if (!is_singular()) return;
-        global $post;
-        if (!$post || !has_shortcode($post->post_content, 'wp_facturas_portal')) return;
-
-        wp_enqueue_style('wpfp-portal', plugins_url('assets/portal.css', __FILE__), [], self::VERSION);
-        wp_enqueue_script('wpfp-portal', plugins_url('assets/portal.js', __FILE__), ['jquery'], self::VERSION, true);
-
-        wp_localize_script('wpfp-portal', 'WPFPP', [
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('wpfp_portal_nonce'),
-        ]);
     }
 
     /* ------------------------------
@@ -269,7 +288,8 @@ class WPFPP_Facturas_Portal {
         echo '</tbody></table>';
         echo '</form>';
 
-        echo '<p style="margin-top:14px;">Shortcode del portal: <code>[wp_facturas_portal]</code> — Vista mensual sin header/footer: <code>[wp_facturas_portal view="monthly" layout="blank"]</code></p>';
+        $portal_url = self::portal_url();
+        echo '<p style="margin-top:14px;">URL portal standalone: <a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p>';
         echo '</div>';
 
         // Checkall script small
@@ -436,6 +456,13 @@ class WPFPP_Facturas_Portal {
         }
         echo '</select></td></tr>';
 
+        $portal_url = self::portal_url();
+        echo '<tr><th><label>Ruta de acceso del portal</label></th><td>';
+        printf('<input name="%s[portal_path]" type="text" class="regular-text" value="%s" placeholder="/portal-facturas" />', esc_attr(self::OPTION_SETTINGS), esc_attr($settings['portal_path']));
+        echo '<p class="description">Solo ruta (sin dominio). Ejemplo: <code>/portal-facturas</code>.</p>';
+        echo '<p class="description"><strong>Importante:</strong> esta ruta no debe coincidir con una página existente de WordPress.</p>';
+        echo '<p><a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p></td></tr>';
+
         echo '<tr><th><label>Nueva clave</label></th><td>';
         printf('<input name="%s[new_password]" type="text" class="regular-text" placeholder="Deja vacío para mantener" />', esc_attr(self::OPTION_SETTINGS));
         echo '<p class="description">Al guardar una nueva clave, se elimina la clave temporal almacenada.</p></td></tr>';
@@ -455,48 +482,17 @@ class WPFPP_Facturas_Portal {
     }
 
     /* ------------------------------
-     * Blank layout (sin header/footer)
+     * Frontend standalone (sin theme)
      * ------------------------------ */
-    public static function maybe_render_blank_portal() {
+    public static function maybe_render_standalone_portal() {
         if (is_admin()) return;
-        if (!is_singular()) return;
+        if (!self::is_valid_portal_route_request()) return;
 
-        global $post;
-        if (!$post || !has_shortcode($post->post_content, 'wp_facturas_portal')) return;
-
-        $shortcodes = self::extract_portal_shortcodes($post->post_content);
-        $use_blank = false;
-        foreach ($shortcodes as $sc_atts) {
-            $layout = isset($sc_atts['layout']) ? strtolower(trim((string)$sc_atts['layout'])) : '';
-            if ($layout === 'blank' || $layout === 'sinheader' || $layout === 'noheader' || $layout === 'noframe') {
-                $use_blank = true;
-                break;
-            }
-        }
-        if (!$use_blank) return;
-
-        // Renderiza solo el contenido del shortcode, sin header/footer del theme
         show_admin_bar(false);
 
-        $title = get_the_title($post);
-        $body = do_shortcode($post->post_content);
-        self::render_blank_page($title, $body);
+        $body = self::render_portal_frontend();
+        self::render_blank_page('Portal Facturas', $body);
         exit;
-    }
-
-    private static function extract_portal_shortcodes($content) {
-        $out = [];
-        if (false === strpos($content, '[wp_facturas_portal')) return $out;
-
-        $pattern = get_shortcode_regex(['wp_facturas_portal']);
-        if (preg_match_all('/' . $pattern . '/s', $content, $m) && !empty($m[3])) {
-            foreach ($m[3] as $attr_str) {
-                $atts = shortcode_parse_atts($attr_str);
-                if (!is_array($atts)) $atts = [];
-                $out[] = $atts;
-            }
-        }
-        return $out;
     }
 
     private static function render_blank_page($title, $body_html) {
@@ -534,14 +530,10 @@ class WPFPP_Facturas_Portal {
     }
 
     /* ------------------------------
-     * Shortcode portal
+     * Frontend portal
      * ------------------------------ */
-    public static function shortcode_portal($atts) {
+    private static function render_portal_frontend() {
         $settings = self::settings();
-        $atts = shortcode_atts([
-            'view' => 'list',     // list | monthly
-            'layout' => 'theme',  // theme | blank (blank se maneja por template_redirect)
-        ], $atts, 'wp_facturas_portal');
 
         // Logout via query param
         if (isset($_GET['wpfp_logout'])) {
@@ -552,7 +544,8 @@ class WPFPP_Facturas_Portal {
             return self::render_login();
         }
 
-        $view = strtolower(trim((string)$atts['view']));
+        $view = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : 'list';
+        $view = strtolower(trim((string)$view));
         if (!in_array($view, ['list','monthly'], true)) $view = 'list';
 
         $estado = isset($_GET['estado']) ? sanitize_text_field($_GET['estado']) : $settings['default_view'];
@@ -622,8 +615,9 @@ class WPFPP_Facturas_Portal {
         ?>
         <div class="wpfp-portal">
             <div class="wpfp-topbar">
-                <div class="wpfp-title">
-                    <?php echo ($view === 'monthly') ? 'Facturas — Vista mensual' : 'Bandeja de Facturas'; ?>
+                <div>
+                    <div class="wpfp-title"><?php echo ($view === 'monthly') ? 'Facturas — Vista mensual' : 'Bandeja de Facturas'; ?></div>
+                    <div class="wpfp-subtitle">Portal standalone (sin theme) para revisión y asignación de facturas.</div>
                 </div>
                 <div class="wpfp-actions">
                     <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout','1')); ?>">Salir</a>
@@ -641,13 +635,13 @@ class WPFPP_Facturas_Portal {
 
                 <?php if ($view === 'monthly'): ?>
                     <div class="wpfp-monthbar">
-                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>">◀</a>
-                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" />
-                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>">▶</a>
+                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>" aria-label="Mes anterior">◀</a>
+                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" />
+                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>" aria-label="Mes siguiente">▶</a>
                     </div>
                 <?php endif; ?>
 
-                <select name="estado">
+                <select name="estado" aria-label="Filtrar por estado">
                     <option value="">— Todos —</option>
                     <?php
                     $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'];
@@ -657,27 +651,29 @@ class WPFPP_Facturas_Portal {
                     ?>
                 </select>
 
-                <select name="proveedor">
+                <select name="proveedor" aria-label="Filtrar por proveedor">
                     <option value="">— Proveedor —</option>
                     <?php foreach ($proveedores as $p): ?>
                         <option value="<?php echo esc_attr($p); ?>" <?php selected($proveedor, $p); ?>><?php echo esc_html($p); ?></option>
                     <?php endforeach; ?>
                 </select>
 
-                <input type="search" name="q" value="<?php echo esc_attr($q); ?>" placeholder="Buscar folio/proveedor" />
+                <input type="search" name="q" value="<?php echo esc_attr($q); ?>" placeholder="Buscar folio/proveedor" aria-label="Buscar folio o proveedor" />
                 <button type="submit">Filtrar</button>
+                <a class="wpfp-reset" href="<?php echo esc_url(remove_query_arg(['estado','proveedor','q','ym'])); ?>">Limpiar</a>
             </form>
 
             <div class="wpfp-summary">
-                <div><strong><?php echo (int)$total_count; ?></strong> facturas en vista</div>
-                <div><strong><?php echo number_format($total_monto, 0, ',', '.'); ?></strong> CLP (suma vista)</div>
+                <div class="wpfp-card"><span>Total en vista</span><strong><?php echo (int)$total_count; ?></strong></div>
+                <div class="wpfp-card"><span>Suma estimada</span><strong><?php echo number_format($total_monto, 0, ',', '.'); ?> CLP</strong></div>
+                <div class="wpfp-card"><span>Acción rápida</span><strong>Enter = Guardar fila</strong></div>
             </div>
 
             <div class="wpfp-hint">
                 Escribe una observación y presiona <strong>Guardar</strong>. Al guardar, la factura pasa a <strong>Asignado</strong> automáticamente.
             </div>
 
-            <div class="wpfp-tablewrap">
+            <div class="wpfp-tablewrap" role="region" aria-label="Listado de facturas">
                 <table class="wpfp-table">
                     <thead>
                         <tr>
@@ -711,11 +707,11 @@ class WPFPP_Facturas_Portal {
                                 <td><?php echo esc_html($monto); ?></td>
                                 <td><?php echo $pdf; ?></td>
                                 <td>
-                                    <input type="text" class="wpfp-obs" value="<?php echo esc_attr((string)$r->observacion); ?>" placeholder="Escribe aquí..." />
+                                    <input type="text" class="wpfp-obs" value="<?php echo esc_attr((string)$r->observacion); ?>" placeholder="Escribe aquí..." aria-label="Observación de factura <?php echo (int)$r->id; ?>" />
                                 </td>
                                 <td><span class="wpfp-badge wpfp-<?php echo esc_attr($r->estado); ?>"><?php echo esc_html(ucfirst($r->estado)); ?></span></td>
                                 <td>
-                                    <button type="button" class="wpfp-save">Guardar</button>
+                                    <button type="button" class="wpfp-save" aria-label="Guardar observación de factura <?php echo (int)$r->id; ?>">Guardar</button>
                                 </td>
                             </tr>
                         <?php endforeach;
@@ -729,7 +725,8 @@ class WPFPP_Facturas_Portal {
         <?php
         return ob_get_clean();
     }
-private static function render_login() {
+
+    private static function render_login() {
         $err = '';
         if (!empty($_POST['wpfp_pass']) && isset($_POST['wpfp_login']) && wp_verify_nonce($_POST['wpfp_login'], 'wpfp_login')) {
             $pass = (string)$_POST['wpfp_pass'];

@@ -4,7 +4,7 @@
     if(!$t.length) return;
     $t.text(msg).removeClass('ok err').addClass(ok?'ok':'err').fadeIn(120);
     clearTimeout(window.__wpfp_to);
-    window.__wpfp_to = setTimeout(function(){ $t.fadeOut(200); }, 1600);
+    window.__wpfp_to = setTimeout(function(){ $t.fadeOut(220); }, 1800);
   }
 
   function updateBadge($row, estado){
@@ -14,11 +14,20 @@
       .text(estado.charAt(0).toUpperCase()+estado.slice(1));
   }
 
+  function setDirtyState($input, dirty){
+    var $row = $input.closest('tr');
+    var $btn = $row.find('.wpfp-save');
+    $input.toggleClass('wpfp-dirty', !!dirty);
+    $btn.toggleClass('wpfp-ready', !!dirty);
+  }
+
   function saveRow($row){
     var id = $row.data('id');
-    var obs = $row.find('.wpfp-obs').val();
+    var $input = $row.find('.wpfp-obs');
+    var obs = $input.val();
     var $btn = $row.find('.wpfp-save');
     $btn.prop('disabled', true).text('Guardando...');
+
     $.post(WPFPP.ajax_url, {
       action: 'wpfp_update_factura',
       nonce: WPFPP.nonce,
@@ -27,18 +36,38 @@
     }).done(function(resp){
       if(resp && resp.success){
         updateBadge($row, resp.data.estado);
-        toast('Guardado', true);
+        $input.data('initial', obs);
+        setDirtyState($input, false);
+        toast('Guardado correctamente', true);
       } else {
-        toast((resp && resp.data && resp.data.message) ? resp.data.message : 'Error', false);
+        toast((resp && resp.data && resp.data.message) ? resp.data.message : 'Error al guardar', false);
       }
     }).fail(function(xhr){
-      var msg = 'Error';
+      var msg = 'Error al guardar';
       if(xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) msg = xhr.responseJSON.data.message;
       toast(msg, false);
     }).always(function(){
       $btn.prop('disabled', false).text('Guardar');
     });
   }
+
+  function refreshDirtyState($input){
+    var initial = $input.data('initial');
+    if (typeof initial === 'undefined') {
+      initial = $input.val();
+      $input.data('initial', initial);
+    }
+    setDirtyState($input, $input.val() !== initial);
+  }
+
+  $('.wpfp-obs').each(function(){
+    var $input = $(this);
+    $input.data('initial', $input.val());
+  });
+
+  $(document).on('input', '.wpfp-obs', function(){
+    refreshDirtyState($(this));
+  });
 
   $(document).on('click', '.wpfp-save', function(){
     var $row = $(this).closest('tr');
