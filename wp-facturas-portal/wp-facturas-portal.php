@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.1.3
+ * Version: 1.2.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.1.3';
+    const VERSION = '1.2.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -615,8 +615,9 @@ class WPFPP_Facturas_Portal {
         ?>
         <div class="wpfp-portal">
             <div class="wpfp-topbar">
-                <div class="wpfp-title">
-                    <?php echo ($view === 'monthly') ? 'Facturas — Vista mensual' : 'Bandeja de Facturas'; ?>
+                <div>
+                    <div class="wpfp-title"><?php echo ($view === 'monthly') ? 'Facturas — Vista mensual' : 'Bandeja de Facturas'; ?></div>
+                    <div class="wpfp-subtitle">Portal standalone (sin theme) para revisión y asignación de facturas.</div>
                 </div>
                 <div class="wpfp-actions">
                     <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout','1')); ?>">Salir</a>
@@ -634,13 +635,13 @@ class WPFPP_Facturas_Portal {
 
                 <?php if ($view === 'monthly'): ?>
                     <div class="wpfp-monthbar">
-                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>">◀</a>
-                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" />
-                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>">▶</a>
+                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>" aria-label="Mes anterior">◀</a>
+                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" />
+                        <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>" aria-label="Mes siguiente">▶</a>
                     </div>
                 <?php endif; ?>
 
-                <select name="estado">
+                <select name="estado" aria-label="Filtrar por estado">
                     <option value="">— Todos —</option>
                     <?php
                     $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'];
@@ -650,27 +651,29 @@ class WPFPP_Facturas_Portal {
                     ?>
                 </select>
 
-                <select name="proveedor">
+                <select name="proveedor" aria-label="Filtrar por proveedor">
                     <option value="">— Proveedor —</option>
                     <?php foreach ($proveedores as $p): ?>
                         <option value="<?php echo esc_attr($p); ?>" <?php selected($proveedor, $p); ?>><?php echo esc_html($p); ?></option>
                     <?php endforeach; ?>
                 </select>
 
-                <input type="search" name="q" value="<?php echo esc_attr($q); ?>" placeholder="Buscar folio/proveedor" />
+                <input type="search" name="q" value="<?php echo esc_attr($q); ?>" placeholder="Buscar folio/proveedor" aria-label="Buscar folio o proveedor" />
                 <button type="submit">Filtrar</button>
+                <a class="wpfp-reset" href="<?php echo esc_url(remove_query_arg(['estado','proveedor','q','ym'])); ?>">Limpiar</a>
             </form>
 
             <div class="wpfp-summary">
-                <div><strong><?php echo (int)$total_count; ?></strong> facturas en vista</div>
-                <div><strong><?php echo number_format($total_monto, 0, ',', '.'); ?></strong> CLP (suma vista)</div>
+                <div class="wpfp-card"><span>Total en vista</span><strong><?php echo (int)$total_count; ?></strong></div>
+                <div class="wpfp-card"><span>Suma estimada</span><strong><?php echo number_format($total_monto, 0, ',', '.'); ?> CLP</strong></div>
+                <div class="wpfp-card"><span>Acción rápida</span><strong>Enter = Guardar fila</strong></div>
             </div>
 
             <div class="wpfp-hint">
                 Escribe una observación y presiona <strong>Guardar</strong>. Al guardar, la factura pasa a <strong>Asignado</strong> automáticamente.
             </div>
 
-            <div class="wpfp-tablewrap">
+            <div class="wpfp-tablewrap" role="region" aria-label="Listado de facturas">
                 <table class="wpfp-table">
                     <thead>
                         <tr>
@@ -704,11 +707,11 @@ class WPFPP_Facturas_Portal {
                                 <td><?php echo esc_html($monto); ?></td>
                                 <td><?php echo $pdf; ?></td>
                                 <td>
-                                    <input type="text" class="wpfp-obs" value="<?php echo esc_attr((string)$r->observacion); ?>" placeholder="Escribe aquí..." />
+                                    <input type="text" class="wpfp-obs" value="<?php echo esc_attr((string)$r->observacion); ?>" placeholder="Escribe aquí..." aria-label="Observación de factura <?php echo (int)$r->id; ?>" />
                                 </td>
                                 <td><span class="wpfp-badge wpfp-<?php echo esc_attr($r->estado); ?>"><?php echo esc_html(ucfirst($r->estado)); ?></span></td>
                                 <td>
-                                    <button type="button" class="wpfp-save">Guardar</button>
+                                    <button type="button" class="wpfp-save" aria-label="Guardar observación de factura <?php echo (int)$r->id; ?>">Guardar</button>
                                 </td>
                             </tr>
                         <?php endforeach;
@@ -722,7 +725,8 @@ class WPFPP_Facturas_Portal {
         <?php
         return ob_get_clean();
     }
-private static function render_login() {
+
+    private static function render_login() {
         $err = '';
         if (!empty($_POST['wpfp_pass']) && isset($_POST['wpfp_login']) && wp_verify_nonce($_POST['wpfp_login'], 'wpfp_login')) {
             $pass = (string)$_POST['wpfp_pass'];

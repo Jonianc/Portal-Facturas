@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.2.0] - 2026-02-16
+### Changed
+- Mejora integral UI/UX del portal frontend standalone: nueva jerarquía visual, filtros en bloque, tarjetas de resumen, botones más claros y mejor adaptación móvil.
+- Se agrega acción "Limpiar" en filtros y mejoras de accesibilidad (labels ARIA en controles clave).
+- Se mejora la interacción de edición de observaciones con estado visual de cambios pendientes y feedback de guardado más claro.
+- Se actualiza la versión del plugin de `1.1.3` a `1.2.0`.
+
 ## [1.1.3] - 2026-02-16
 ### Changed
 - Se corrige la validación de ruta standalone para comparar contra la ruta absoluta real de `home_url(...)`, evitando que el portal cargue el theme cuando el sitio está en subdirectorio.
