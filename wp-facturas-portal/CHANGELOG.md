@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.1.3] - 2026-02-16
+### Changed
+- Se corrige la validación de ruta standalone para comparar contra la ruta absoluta real de `home_url(...)`, evitando que el portal cargue el theme cuando el sitio está en subdirectorio.
+- El portal standalone se renderiza únicamente por coincidencia de ruta configurada, sin depender de shortcode ni de query params.
+- En Ajustes se agrega una nota explícita indicando que la ruta del portal no debe coincidir con una página existente.
+- Se actualiza la versión del plugin de `1.1.2` a `1.1.3`.
+
 ## [1.1.2] - 2026-02-16
 ### Changed
 - Se corrige la URL de acceso del portal configurable para abrir directamente en la ruta guardada, sin requerir `?wpfp_portal=1`.

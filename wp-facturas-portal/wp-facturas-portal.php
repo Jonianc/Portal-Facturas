@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.1.2
+ * Version: 1.1.3
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.1.2';
+    const VERSION = '1.1.3';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -102,11 +102,15 @@ class WPFPP_Facturas_Portal {
     private static function is_valid_portal_route_request() {
         $settings = self::settings();
         $configured = self::sanitize_portal_path($settings['portal_path'] ?? '/portal-facturas');
+
         $request_uri = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '';
         $request_path = wp_parse_url($request_uri, PHP_URL_PATH);
         $request_path = is_string($request_path) ? $request_path : '';
 
-        return untrailingslashit($request_path) === untrailingslashit($configured);
+        $portal_abs_path = wp_parse_url(home_url($configured), PHP_URL_PATH);
+        $portal_abs_path = is_string($portal_abs_path) ? $portal_abs_path : $configured;
+
+        return untrailingslashit($request_path) === untrailingslashit($portal_abs_path);
     }
 
     private static function settings() {
@@ -456,6 +460,7 @@ class WPFPP_Facturas_Portal {
         echo '<tr><th><label>Ruta de acceso del portal</label></th><td>';
         printf('<input name="%s[portal_path]" type="text" class="regular-text" value="%s" placeholder="/portal-facturas" />', esc_attr(self::OPTION_SETTINGS), esc_attr($settings['portal_path']));
         echo '<p class="description">Solo ruta (sin dominio). Ejemplo: <code>/portal-facturas</code>.</p>';
+        echo '<p class="description"><strong>Importante:</strong> esta ruta no debe coincidir con una página existente de WordPress.</p>';
         echo '<p><a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p></td></tr>';
 
         echo '<tr><th><label>Nueva clave</label></th><td>';
@@ -481,8 +486,6 @@ class WPFPP_Facturas_Portal {
      * ------------------------------ */
     public static function maybe_render_standalone_portal() {
         if (is_admin()) return;
-        $legacy_query_access = isset($_GET['wpfp_portal']);
-        if (!$legacy_query_access && !self::is_valid_portal_route_request()) return;
         if (!self::is_valid_portal_route_request()) return;
 
         show_admin_bar(false);
