@@ -9,7 +9,7 @@
 
   function updateBadge($row, estado){
     var $b = $row.find('.wpfp-badge');
-    $b.removeClass('wpfp-pendiente wpfp-asignado wpfp-duda wpfp-cargada')
+    $b.removeClass('wpfp-pendiente wpfp-asignado')
       .addClass('wpfp-'+estado)
       .text(estado.charAt(0).toUpperCase()+estado.slice(1));
   }
@@ -79,5 +79,10 @@
       e.preventDefault();
       saveRow($(this).closest('tr'));
     }
+  });
+
+  $(document).on('change', '[data-wpfp-autosubmit="month"]', function(){
+    var form = this.form;
+    if(form) form.submit();
   });
 })(jQuery);

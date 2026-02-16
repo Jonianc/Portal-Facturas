@@ -5,6 +5,10 @@
 .wpfp-actions{display:flex;align-items:center;gap:8px}
 .wpfp-link{font-size:14px;text-decoration:none;border:1px solid #d8dde6;background:#fff;border-radius:10px;padding:8px 12px;color:#111}
 
+.wpfp-view-switch{display:inline-flex;align-items:center;gap:4px;padding:4px;border:1px solid #d8dde6;border-radius:12px;background:#fff}
+.wpfp-switch{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;color:#374151}
+.wpfp-switch:hover{background:#f3f4f6}
+.wpfp-switch.is-active{background:#111;color:#fff}
 .wpfp-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:8px 0 12px;padding:12px;border:1px solid #e8ebf0;background:#fff;border-radius:14px}
 .wpfp-filters select,.wpfp-filters input{width:100%;padding:10px 12px;border:1px solid #d8dde6;border-radius:10px;font-size:14px;background:#fff;min-height:40px}
 .wpfp-filters button,.wpfp-reset{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 14px;border-radius:10px;font-size:14px;text-decoration:none}
@@ -15,6 +19,14 @@
 .wpfp-monthbar input{min-width:170px}
 .wpfp-monthbtn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:1px solid #d8dde6;border-radius:10px;text-decoration:none;color:#111;background:#fff}
 
+.wpfp-chip{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 10px;border:1px solid #d8dde6;border-radius:999px;text-decoration:none;background:#fff;color:#111;font-size:12px;font-weight:600}
+.wpfp-monthlabel{font-size:13px;color:#475569;font-weight:600}
+
+.wpfp-state-summary{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.wpfp-state-item{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid transparent;background:#f8fafc;color:#334155}
+.wpfp-state-item strong{font-size:13px}
+.wpfp-state-item.is-pendiente{background:#fff5f5;border-color:#ffd1d1}
+.wpfp-state-item.is-asignado{background:#f3fff5;border-color:#bfe9c5}
 .wpfp-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:0 0 12px}
 .wpfp-card{border:1px solid #e8ebf0;border-radius:12px;background:#fff;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
 .wpfp-card span{font-size:12px;color:#5a6472;text-transform:uppercase;letter-spacing:.03em}
@@ -39,8 +51,6 @@
 .wpfp-badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid transparent;font-weight:600}
 .wpfp-pendiente{background:#fff5f5;border-color:#ffd1d1}
 .wpfp-asignado{background:#f3fff5;border-color:#bfe9c5}
-.wpfp-duda{background:#fffaf0;border-color:#ffe0a6}
-.wpfp-cargada{background:#f1f3f5;border-color:#d5d9dd}
 
 .wpfp-empty{text-align:center;color:#666;padding:28px}
 .wpfp-toast{position:fixed;right:16px;bottom:16px;padding:11px 13px;border-radius:12px;border:1px solid #e7e9ef;background:#fff;box-shadow:0 10px 30px rgba(0,0,0,.12);font-size:13px;z-index:30}
@@ -60,6 +70,8 @@
   .wpfp-topbar{flex-direction:column;align-items:stretch}
   .wpfp-actions{justify-content:flex-end}
   .wpfp-filters{grid-template-columns:1fr}
-  .wpfp-monthbar{display:grid;grid-template-columns:40px 1fr 40px}
+  .wpfp-monthbar{display:grid;grid-template-columns:40px 1fr 40px;gap:8px}
+  .wpfp-monthlabel{grid-column:1/-1}
+  .wpfp-chip{grid-column:1/-1;justify-self:start}
   .wpfp-summary{grid-template-columns:1fr}
 }

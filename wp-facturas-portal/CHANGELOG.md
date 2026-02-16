@@ -2,6 +2,38 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.6.0] - 2026-02-16
+### Changed
+- Se simplifica el plugin para trabajar solo con dos estados: `pendiente` y `asignado`.
+- Se eliminan `duda` y `cargada` de filtros, formularios de edición, opciones de ajustes, resumen mensual y badges del portal.
+- Se ajustan transiciones y acciones masivas para el nuevo modelo de estados (sin operaciones de cargado).
+- Se actualiza la versión del plugin de `1.5.0` a `1.6.0`.
+
+## [1.5.0] - 2026-02-16
+### Changed
+- Se normaliza la lógica de transiciones de estado (`pendiente`, `asignado`, `duda`, `cargada`) para mantener consistentes `assigned_*` y `loaded_*` en edición admin y en portal.
+- En el portal, al guardar observación una factura en estado `duda` conserva ese estado (si la observación no queda vacía) y solo vuelve a `pendiente` cuando se limpia.
+- Las acciones masivas ahora sincronizan metadatos de estado: `Marcar como Cargada` completa también asignación faltante y `Marcar como Pendiente` limpia asignación/carga.
+- Se actualiza la versión del plugin de `1.4.0` a `1.5.0`.
+
+## [1.4.0] - 2026-02-16
+### Added
+- La vista mensual incorpora un bloque de resumen por estado (Pendiente, Asignado, Duda y Cargada) para lectura rápida del mes filtrado.
+- Se agrega acceso rápido a **Mes actual** y etiqueta textual del mes activo en los controles de navegación mensual.
+
+### Changed
+- En vista mensual se excluyen facturas sin `fecha_factura` para que el corte mensual sea consistente.
+- Se mejora la UX del selector mensual con autoenvío al cambiar el input de mes.
+- Se actualiza la versión del plugin de `1.3.0` a `1.4.0`.
+
+## [1.3.0] - 2026-02-16
+### Added
+- Se agrega un selector visible en el portal para alternar entre vista de **Listado** y **Mensual** desde la cabecera.
+
+### Changed
+- Se mejora la navegación de la vista mensual conservando filtros al cambiar de vista y usando el mes actual por defecto.
+- Se actualiza la versión del plugin de `1.2.0` a `1.3.0`.
+
 ## [1.2.0] - 2026-02-16
 ### Changed
 - Mejora integral UI/UX del portal frontend standalone: nueva jerarquía visual, filtros en bloque, tarjetas de resumen, botones más claros y mejor adaptación móvil.

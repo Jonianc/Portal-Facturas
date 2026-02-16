@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.2.0
+ * Version: 1.6.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.2.0';
+    const VERSION = '1.6.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -188,12 +188,11 @@ class WPFPP_Facturas_Portal {
     public static function admin_page_list() {
         if (!current_user_can('manage_options')) return;
 
-        // Acciones (marcar cargada / borrar)
+        // Acciones (marcar pendiente / borrar)
         if (!empty($_POST['wpfp_action']) && check_admin_referer('wpfp_admin_action', 'wpfp_nonce')) {
             $action = sanitize_text_field($_POST['wpfp_action']);
             $ids = isset($_POST['ids']) ? array_map('intval', (array)$_POST['ids']) : [];
             if ($ids) {
-                if ($action === 'mark_loaded') self::mark_loaded($ids);
                 if ($action === 'mark_pending') self::mark_pending($ids);
                 if ($action === 'delete') self::delete_facturas($ids);
             }
@@ -218,7 +217,7 @@ class WPFPP_Facturas_Portal {
         echo '<input type="hidden" name="page" value="wpfp_facturas" />';
         echo '<select name="estado">';
         echo '<option value="">— Todos los estados —</option>';
-        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'] as $k=>$label) {
+        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado'] as $k=>$label) {
             printf('<option value="%s"%s>%s</option>', esc_attr($k), selected($estado, $k, false), esc_html($label));
         }
         echo '</select>';
@@ -239,7 +238,6 @@ class WPFPP_Facturas_Portal {
         echo '<div class="wpfp-bulk">';
         echo '<select name="wpfp_action" required>';
         echo '<option value="">— Acción masiva —</option>';
-        echo '<option value="mark_loaded">Marcar como Cargada</option>';
         echo '<option value="mark_pending">Marcar como Pendiente</option>';
         echo '<option value="delete">Eliminar</option>';
         echo '</select> ';
@@ -258,12 +256,11 @@ class WPFPP_Facturas_Portal {
             <th>Observación</th>
             <th>PDF</th>
             <th>Asignado</th>
-            <th>Cargada</th>
             <th>Acciones</th>
         </tr></thead><tbody>';
 
         if (!$rows) {
-            echo '<tr><td colspan="12">Sin resultados.</td></tr>';
+            echo '<tr><td colspan="11">Sin resultados.</td></tr>';
         } else {
             foreach ($rows as $r) {
                 $pdf = $r->pdf_url ? '<a href="'.esc_url($r->pdf_url).'" target="_blank" rel="noopener">Abrir</a>' : '—';
@@ -279,7 +276,6 @@ class WPFPP_Facturas_Portal {
                 echo '<td>'.esc_html(wp_trim_words((string)$r->observacion, 15)).'</td>';
                 echo '<td>'.$pdf.'</td>';
                 echo '<td>'.esc_html($r->assigned_at ? $r->assigned_at : '—').'</td>';
-                echo '<td>'.esc_html($r->loaded_at ? $r->loaded_at : '—').'</td>';
                 $edit_url = admin_url('admin.php?page=wpfp_facturas_edit&id='.(int)$r->id);
                 echo '<td><a class="button button-small" href="'.esc_url($edit_url).'">Editar</a></td>';
                 echo '</tr>';
@@ -402,7 +398,7 @@ class WPFPP_Facturas_Portal {
         echo '<tr><th><label>Observación</label></th><td><textarea name="observacion" rows="4" class="large-text" placeholder="Observación / asignación">'.esc_textarea((string)$row->observacion).'</textarea></td></tr>';
 
         echo '<tr><th><label>Estado</label></th><td><select name="estado">';
-        $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'];
+        $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado'];
         foreach ($states as $k=>$label) {
             echo '<option value="'.esc_attr($k).'" '.selected($row->estado, $k, false).'>'.esc_html($label).'</option>';
         }
@@ -412,16 +408,11 @@ class WPFPP_Facturas_Portal {
         echo esc_html($row->assigned_at ? $row->assigned_at : '—');
         echo '</td></tr>';
 
-        echo '<tr><th><label>Cargada</label></th><td>';
-        echo esc_html($row->loaded_at ? $row->loaded_at : '—');
-        echo '</td></tr>';
-
         echo '</tbody></table>';
 
         echo '<p><button class="button button-primary" name="wpfp_save" value="1">Guardar cambios</button></p>';
         echo '</form></div>';
     }
-
 
     public static function admin_page_settings() {
         if (!current_user_can('manage_options')) return;
@@ -449,7 +440,7 @@ class WPFPP_Facturas_Portal {
 
         echo '<tr><th><label>Vista por defecto</label></th><td>';
         echo '<select name="'.esc_attr(self::OPTION_SETTINGS).'[default_view]">';
-        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada','todas'=>'Todas'] as $k=>$label) {
+        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado','todas'=>'Todas'] as $k=>$label) {
             $val = ($k==='todas') ? '' : $k;
             $sel = selected($settings['default_view'], ($k==='todas'?'':$k), false);
             echo '<option value="'.esc_attr($val).'" '.$sel.'>'.esc_html($label).'</option>';
@@ -555,9 +546,11 @@ class WPFPP_Facturas_Portal {
         $date_from = null;
         $date_to = null;
         $ym = null;
+        $month_label = '';
         $include_no_date = true;
 
         if ($view === 'monthly') {
+            $include_no_date = false;
             $ym = isset($_GET['ym']) ? sanitize_text_field($_GET['ym']) : '';
             if (!preg_match('/^\d{4}-\d{2}$/', $ym)) {
                 $ym = wp_date('Y-m', current_time('timestamp'));
@@ -573,6 +566,7 @@ class WPFPP_Facturas_Portal {
             $dt2 = clone $dt;
             $dt2->modify('first day of next month');
             $date_to = $dt2->format('Y-m-d');
+            $month_label = wp_date('F Y', $dt->getTimestamp());
         }
 
         $order = ($view === 'monthly')
@@ -595,11 +589,18 @@ class WPFPP_Facturas_Portal {
         // Totales de la vista actual
         $total_count = is_array($rows) ? count($rows) : 0;
         $total_monto = 0.0;
+        $state_totals = ['pendiente'=>0, 'asignado'=>0];
+        $providers_in_view = [];
+
         if ($rows) {
             foreach ($rows as $r) {
                 if (!is_null($r->monto)) $total_monto += (float)$r->monto;
+                if (isset($state_totals[$r->estado])) $state_totals[$r->estado]++;
+                if (!empty($r->proveedor)) $providers_in_view[$r->proveedor] = true;
             }
         }
+
+        $providers_count = count($providers_in_view);
 
         // Prev/next mes (solo monthly)
         $prev_ym = $next_ym = '';
@@ -611,6 +612,12 @@ class WPFPP_Facturas_Portal {
             $next_ym = $n->format('Y-m');
         }
 
+        $list_url = remove_query_arg(['view', 'ym']);
+        $monthly_url = add_query_arg([
+            'view' => 'monthly',
+            'ym' => $ym ?: wp_date('Y-m', current_time('timestamp')),
+        ], remove_query_arg(['view']));
+
         ob_start();
         ?>
         <div class="wpfp-portal">
@@ -620,6 +627,10 @@ class WPFPP_Facturas_Portal {
                     <div class="wpfp-subtitle">Portal standalone (sin theme) para revisión y asignación de facturas.</div>
                 </div>
                 <div class="wpfp-actions">
+                    <div class="wpfp-view-switch" role="tablist" aria-label="Cambiar vista de facturas">
+                        <a class="wpfp-switch <?php echo ($view === 'list') ? 'is-active' : ''; ?>" href="<?php echo esc_url($list_url); ?>" role="tab" aria-selected="<?php echo ($view === 'list') ? 'true' : 'false'; ?>">Listado</a>
+                        <a class="wpfp-switch <?php echo ($view === 'monthly') ? 'is-active' : ''; ?>" href="<?php echo esc_url($monthly_url); ?>" role="tab" aria-selected="<?php echo ($view === 'monthly') ? 'true' : 'false'; ?>">Mensual</a>
+                    </div>
                     <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout','1')); ?>">Salir</a>
                 </div>
             </div>
@@ -636,15 +647,17 @@ class WPFPP_Facturas_Portal {
                 <?php if ($view === 'monthly'): ?>
                     <div class="wpfp-monthbar">
                         <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>" aria-label="Mes anterior">◀</a>
-                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" />
+                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" data-wpfp-autosubmit="month" />
                         <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>" aria-label="Mes siguiente">▶</a>
+                        <a class="wpfp-chip" href="<?php echo esc_url(add_query_arg(['ym'=>wp_date('Y-m', current_time('timestamp'))])); ?>">Mes actual</a>
+                        <span class="wpfp-monthlabel"><?php echo esc_html($month_label); ?></span>
                     </div>
                 <?php endif; ?>
 
                 <select name="estado" aria-label="Filtrar por estado">
                     <option value="">— Todos —</option>
                     <?php
-                    $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'];
+                    $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado'];
                     foreach ($states as $k=>$label) {
                         printf('<option value="%s"%s>%s</option>', esc_attr($k), selected($estado, $k, false), esc_html($label));
                     }
@@ -666,8 +679,16 @@ class WPFPP_Facturas_Portal {
             <div class="wpfp-summary">
                 <div class="wpfp-card"><span>Total en vista</span><strong><?php echo (int)$total_count; ?></strong></div>
                 <div class="wpfp-card"><span>Suma estimada</span><strong><?php echo number_format($total_monto, 0, ',', '.'); ?> CLP</strong></div>
+                <div class="wpfp-card"><span>Proveedores en vista</span><strong><?php echo (int)$providers_count; ?></strong></div>
                 <div class="wpfp-card"><span>Acción rápida</span><strong>Enter = Guardar fila</strong></div>
             </div>
+
+            <?php if ($view === 'monthly'): ?>
+            <div class="wpfp-state-summary" aria-label="Resumen por estado del mes">
+                <span class="wpfp-state-item is-pendiente">Pendiente: <strong><?php echo (int)$state_totals['pendiente']; ?></strong></span>
+                <span class="wpfp-state-item is-asignado">Asignado: <strong><?php echo (int)$state_totals['asignado']; ?></strong></span>
+            </div>
+            <?php endif; ?>
 
             <div class="wpfp-hint">
                 Escribe una observación y presiona <strong>Guardar</strong>. Al guardar, la factura pasa a <strong>Asignado</strong> automáticamente.
@@ -833,6 +854,28 @@ class WPFPP_Facturas_Portal {
         return wp_check_password($pass, $settings['password_hash']);
     }
 
+    private static function state_transition_payload($current, $new_estado, $actor = 'Admin') {
+        $now = current_time('mysql');
+
+        $assigned_at = $current->assigned_at;
+        $assigned_by = $current->assigned_by;
+
+        if ($new_estado === 'pendiente') {
+            $assigned_at = null;
+            $assigned_by = null;
+        }
+
+        if ($new_estado === 'asignado') {
+            if (!$assigned_at) $assigned_at = $now;
+            if (!$assigned_by) $assigned_by = $actor;
+        }
+
+        return [
+            'assigned_at' => $assigned_at,
+            'assigned_by' => $assigned_by,
+        ];
+    }
+
     /* ------------------------------
      * AJAX: update observacion -> auto estado asignado
      * ------------------------------ */
@@ -850,22 +893,15 @@ class WPFPP_Facturas_Portal {
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id=%d", $id));
         if (!$row) wp_send_json_error(['message'=>'No existe'], 404);
 
-        // Si está cargada, no permitir cambios
-        if ($row->estado === 'cargada') {
-            wp_send_json_error(['message'=>'Esta factura está marcada como Cargada.'], 409);
-        }
-
-        $now = current_time('mysql');
-
         $new_estado = trim($obs) !== '' ? 'asignado' : 'pendiente';
-        $assigned_at = trim($obs) !== '' ? $now : null;
-        $assigned_by = trim($obs) !== '' ? 'Cliente' : null;
+
+        $state_meta = self::state_transition_payload($row, $new_estado, 'Cliente');
 
         $updated = $wpdb->update($table, [
             'observacion' => $obs,
             'estado' => $new_estado,
-            'assigned_at' => $assigned_at,
-            'assigned_by' => $assigned_by,
+            'assigned_at' => $state_meta['assigned_at'],
+            'assigned_by' => $state_meta['assigned_by'],
         ], ['id' => $id], ['%s','%s','%s','%s'], ['%d']);
 
         if ($updated === false) wp_send_json_error(['message'=>'No se pudo guardar'], 500);
@@ -921,7 +957,7 @@ class WPFPP_Facturas_Portal {
         $current = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id=%d", $id));
         if (!$current) return false;
 
-        $allowed_states = ['pendiente','asignado','duda','cargada'];
+        $allowed_states = ['pendiente','asignado'];
 
         $proveedor = sanitize_text_field($data['proveedor'] ?? $current->proveedor);
         $folio = sanitize_text_field($data['folio'] ?? $current->folio);
@@ -940,37 +976,10 @@ class WPFPP_Facturas_Portal {
         $estado_in = sanitize_text_field($data['estado'] ?? $current->estado);
         $estado = in_array($estado_in, $allowed_states, true) ? $estado_in : (string)$current->estado;
 
-        $now = current_time('mysql');
-
-        // Timestamps según estado (admin puede forzar estados)
-        $assigned_at = $current->assigned_at;
-        $assigned_by = $current->assigned_by;
-        $loaded_at = $current->loaded_at;
-        $loaded_by = $current->loaded_by;
-
-        if ($estado === 'asignado') {
-            if (!$assigned_at) $assigned_at = $now;
-            if (!$assigned_by) $assigned_by = 'Admin';
-        } elseif ($estado === 'pendiente' || $estado === 'duda') {
-            // Reabrir
-            $assigned_at = null;
-            $assigned_by = null;
-            if ($estado !== 'cargada') {
-                $loaded_at = null;
-                $loaded_by = null;
-            }
-        }
-
-        if ($estado === 'cargada') {
-            if (!$loaded_at) $loaded_at = $now;
-            if (!$loaded_by) $loaded_by = 'Admin';
-        } else {
-            // Si sale de cargada, limpia cargada
-            if ($current->estado === 'cargada') {
-                $loaded_at = null;
-                $loaded_by = null;
-            }
-        }
+        // Timestamps consistentes según estado
+        $state_meta = self::state_transition_payload($current, $estado, 'Admin');
+        $assigned_at = $state_meta['assigned_at'];
+        $assigned_by = $state_meta['assigned_by'];
 
         $updated = $wpdb->update($table, [
             'proveedor' => $proveedor,
@@ -983,16 +992,13 @@ class WPFPP_Facturas_Portal {
             'estado' => $estado,
             'assigned_at' => $assigned_at,
             'assigned_by' => $assigned_by,
-            'loaded_at' => $loaded_at,
-            'loaded_by' => $loaded_by,
         ], ['id' => $id],
-        ['%s','%s','%s','%f','%s','%s','%s','%s','%s','%s','%s','%s'],
+        ['%s','%s','%s','%f','%s','%s','%s','%s','%s','%s'],
         ['%d']);
 
         if ($updated === false) return false;
         return true;
     }
-
 
     private static function get_facturas($args=[]) {
         global $wpdb;
@@ -1033,7 +1039,6 @@ class WPFPP_Facturas_Portal {
             $params[] = $dt;
         }
 
-
         $order = !empty($args['order']) ? $args['order'] : 'created_at DESC';
         $limit = !empty($args['limit']) ? (int)$args['limit'] : 200;
         $limit = max(1, min(2000, $limit));
@@ -1072,23 +1077,13 @@ class WPFPP_Facturas_Portal {
         return $wpdb->get_col($sql);
     }
 
-    private static function mark_loaded($ids) {
-        global $wpdb;
-        $table = self::table_name();
-        $ids = array_filter(array_map('intval', $ids));
-        if (!$ids) return;
-        $in = implode(',', array_fill(0, count($ids), '%d'));
-        $now = current_time('mysql');
-        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='cargada', loaded_at=%s, loaded_by=%s WHERE id IN ($in)", array_merge([$now, 'Admin'], $ids)));
-    }
-
     private static function mark_pending($ids) {
         global $wpdb;
         $table = self::table_name();
         $ids = array_filter(array_map('intval', $ids));
         if (!$ids) return;
         $in = implode(',', array_fill(0, count($ids), '%d'));
-        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='pendiente' WHERE id IN ($in)", $ids));
+        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='pendiente', assigned_at=NULL, assigned_by=NULL WHERE id IN ($in)", $ids));
     }
 
     private static function delete_facturas($ids) {
