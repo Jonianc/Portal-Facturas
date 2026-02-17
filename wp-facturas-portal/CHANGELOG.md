@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.8.3] - 2026-02-17
+### Fixed
+- Se corrige definitivamente la gestión de usuarios en Ajustes: `sanitize_settings()` ahora conserva y sanea `portal_users` cuando la opción se guarda por API, evitando que el callback de sanitización descarte cambios de alta/edición/eliminación.
+- Se centraliza el saneamiento de `portal_users` en `sanitize_portal_users_array()` para usar la misma lógica en guardado manual y sanitización de ajustes.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.2` a `1.8.3`.
+
 ## [1.8.2] - 2026-02-17
 ### Fixed
 - Se corrige falso negativo al guardar usuarios en Ajustes: si `update_option(...)` retorna `false` porque no hay cambio efectivo, ahora se considera guardado válido y no se muestra error incorrecto.

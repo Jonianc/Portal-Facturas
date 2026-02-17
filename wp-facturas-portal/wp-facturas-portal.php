@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.8.2
+ * Version: 1.8.3
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.8.2';
+    const VERSION = '1.8.3';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -207,21 +207,7 @@ class WPFPP_Facturas_Portal {
     }
 
     private static function save_portal_users($users) {
-        $users = is_array($users) ? $users : [];
-        $clean = [];
-        $seen = [];
-
-        foreach ($users as $u) {
-            $key = self::normalize_user_key($u['key'] ?? '');
-            $hash = (string)($u['password_hash'] ?? '');
-            if ($key === '' || $hash === '' || isset($seen[$key])) continue;
-            $seen[$key] = true;
-            $clean[] = [
-                'key' => $key,
-                'name' => sanitize_text_field($u['name'] ?? $key),
-                'password_hash' => $hash,
-            ];
-        }
+        $clean = self::sanitize_portal_users_array($users);
 
         $current = get_option(self::OPTION_SETTINGS, []);
         if (!is_array($current)) $current = [];
@@ -272,6 +258,26 @@ class WPFPP_Facturas_Portal {
         return $reloaded_clean == $next_clean;
     }
 
+    private static function sanitize_portal_users_array($users) {
+        $users = is_array($users) ? $users : [];
+        $clean = [];
+        $seen = [];
+
+        foreach ($users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '' || isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $clean[] = [
+                'key' => $key,
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        return $clean;
+    }
+
     public static function table_name() {
         global $wpdb;
         return $wpdb->prefix . 'wpfp_facturas';
@@ -306,6 +312,10 @@ class WPFPP_Facturas_Portal {
         $out['session_hours'] = isset($input['session_hours']) ? max(1, min(72, (int)$input['session_hours'])) : $current['session_hours'];
         $out['default_view']  = isset($input['default_view']) ? sanitize_text_field($input['default_view']) : $current['default_view'];
         $out['portal_path']   = isset($input['portal_path']) ? self::sanitize_portal_path($input['portal_path']) : $current['portal_path'];
+
+        if (isset($input['portal_users']) && is_array($input['portal_users'])) {
+            $out['portal_users'] = self::sanitize_portal_users_array($input['portal_users']);
+        }
 
         if (isset($input['portal_users_raw'])) {
             $parsed_users = self::parse_users_raw((string)$input['portal_users_raw']);
