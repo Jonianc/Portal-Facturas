@@ -2,6 +2,103 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.8.4] - 2026-02-17
+### Fixed
+- Se corrige el flujo de cierre de sesión del portal: al usar `?wpfp_logout=1` ahora se limpia cookie y se redirige inmediatamente a la misma ruta sin el parámetro, evitando quedar bloqueado fuera del login.
+- Se robustece la construcción de URL actual en `current_url_no_post()` para manejar valores faltantes en `$_SERVER`.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.3` a `1.8.4`.
+
+## [1.8.3] - 2026-02-17
+### Fixed
+- Se corrige definitivamente la gestión de usuarios en Ajustes: `sanitize_settings()` ahora conserva y sanea `portal_users` cuando la opción se guarda por API, evitando que el callback de sanitización descarte cambios de alta/edición/eliminación.
+- Se centraliza el saneamiento de `portal_users` en `sanitize_portal_users_array()` para usar la misma lógica en guardado manual y sanitización de ajustes.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.2` a `1.8.3`.
+
+## [1.8.2] - 2026-02-17
+### Fixed
+- Se corrige falso negativo al guardar usuarios en Ajustes: si `update_option(...)` retorna `false` porque no hay cambio efectivo, ahora se considera guardado válido y no se muestra error incorrecto.
+- Se refuerza la validación post-guardado comparando el estado re-cargado de `portal_users` para confirmar persistencia real.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.1` a `1.8.2`.
+
+## [1.8.1] - 2026-02-17
+### Fixed
+- Se corrige la persistencia de creación/edición/eliminación de usuarios en Ajustes: ahora los cambios se guardan de forma fiable actualizando explícitamente `portal_users` dentro de `wpfp_settings`.
+- Se agregan mensajes de error cuando una operación de gestión de usuarios no logra persistirse.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.0` a `1.8.1`.
+
+## [1.8.0] - 2026-02-17
+### Added
+- Nueva UI de gestión de usuarios en Ajustes para crear, editar y eliminar usuarios portal sin depender del textarea `usuario:clave`.
+- Soporte para editar también el `key` del usuario portal desde Ajustes.
+
+### Changed
+- Se mejora UX en Ajustes con listado visible de usuarios activos y formularios separados por acción (alta/edición/eliminación).
+- Al eliminar usuario, las facturas existentes mantienen su `usuario_portal` (quedan huérfanas hasta reasignación manual), según flujo solicitado.
+- Se actualiza la versión del plugin de `1.7.1` a `1.8.0`.
+
+## [1.7.1] - 2026-02-17
+### Fixed
+- Se corrige la compatibilidad de acceso legacy: cuando no hay `portal_users` configurados, el login vuelve a aceptar la clave global existente (`password_hash`) para evitar bloqueo en instalaciones previas.
+
+### Added
+- Se agrega acción de asignación masiva global en **Listado admin** para asignar todas las facturas a un usuario portal seleccionado.
+- Se agrega acción de asignación masiva en **Ajustes** para asignar todas las facturas a un usuario portal seleccionado.
+
+### Changed
+- En sesiones legacy, el frontend mantiene comportamiento sin segmentación por `usuario_portal`, preservando compatibilidad hasta migrar a usuarios individuales.
+- Se actualiza la versión del plugin de `1.7.0` a `1.7.1`.
+
+## [1.7.0] - 2026-02-16
+### Added
+- Se agrega soporte de usuarios de portal con clave individual gestionados desde Ajustes (`usuario:clave`, una línea por usuario).
+- Se incorpora el campo `usuario_portal` en facturas, con migración automática de esquema e índice para segmentación por usuario.
+
+### Changed
+- El login del portal ahora autentica por clave de usuario (sin selector en login) y la sesión queda asociada al usuario autenticado.
+- El frontend (listado, mensual y guardado AJAX) queda restringido a facturas del usuario autenticado.
+- En admin se añade asignación/filtro por `usuario_portal` en listado, alta y edición de facturas.
+- Se actualiza la versión del plugin de `1.6.0` a `1.7.0`.
+
+## [1.6.0] - 2026-02-16
+### Changed
+- Se simplifica el plugin para trabajar solo con dos estados: `pendiente` y `asignado`.
+- Se eliminan `duda` y `cargada` de filtros, formularios de edición, opciones de ajustes, resumen mensual y badges del portal.
+- Se ajustan transiciones y acciones masivas para el nuevo modelo de estados (sin operaciones de cargado).
+- Se actualiza la versión del plugin de `1.5.0` a `1.6.0`.
+
+## [1.5.0] - 2026-02-16
+### Changed
+- Se normaliza la lógica de transiciones de estado (`pendiente`, `asignado`, `duda`, `cargada`) para mantener consistentes `assigned_*` y `loaded_*` en edición admin y en portal.
+- En el portal, al guardar observación una factura en estado `duda` conserva ese estado (si la observación no queda vacía) y solo vuelve a `pendiente` cuando se limpia.
+- Las acciones masivas ahora sincronizan metadatos de estado: `Marcar como Cargada` completa también asignación faltante y `Marcar como Pendiente` limpia asignación/carga.
+- Se actualiza la versión del plugin de `1.4.0` a `1.5.0`.
+
+## [1.4.0] - 2026-02-16
+### Added
+- La vista mensual incorpora un bloque de resumen por estado (Pendiente, Asignado, Duda y Cargada) para lectura rápida del mes filtrado.
+- Se agrega acceso rápido a **Mes actual** y etiqueta textual del mes activo en los controles de navegación mensual.
+
+### Changed
+- En vista mensual se excluyen facturas sin `fecha_factura` para que el corte mensual sea consistente.
+- Se mejora la UX del selector mensual con autoenvío al cambiar el input de mes.
+- Se actualiza la versión del plugin de `1.3.0` a `1.4.0`.
+
+## [1.3.0] - 2026-02-16
+### Added
+- Se agrega un selector visible en el portal para alternar entre vista de **Listado** y **Mensual** desde la cabecera.
+
+### Changed
+- Se mejora la navegación de la vista mensual conservando filtros al cambiar de vista y usando el mes actual por defecto.
+- Se actualiza la versión del plugin de `1.2.0` a `1.3.0`.
+
 ## [1.2.0] - 2026-02-16
 ### Changed
 - Mejora integral UI/UX del portal frontend standalone: nueva jerarquía visual, filtros en bloque, tarjetas de resumen, botones más claros y mejor adaptación móvil.

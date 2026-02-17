@@ -2,22 +2,24 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.2.0
+ * Version: 1.8.4
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.2.0';
+    const VERSION = '1.8.4';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
+    const LEGACY_USER_KEY = '__legacy__';
 
     public static function init() {
         register_activation_hook(__FILE__, [__CLASS__, 'activate']);
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
+        add_action('init', [__CLASS__, 'maybe_upgrade_schema']);
 
         add_action('template_redirect', [__CLASS__, 'maybe_render_standalone_portal']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'admin_assets']);
@@ -27,6 +29,17 @@ class WPFPP_Facturas_Portal {
 
         add_action('wp_ajax_wpfp_logout', [__CLASS__, 'ajax_logout']);
         add_action('wp_ajax_nopriv_wpfp_logout', [__CLASS__, 'ajax_logout']);
+    }
+
+
+    public static function maybe_upgrade_schema() {
+        global $wpdb;
+        $table = self::table_name();
+        $col = $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", 'usuario_portal'));
+        if (!$col) {
+            $wpdb->query("ALTER TABLE {$table} ADD COLUMN usuario_portal VARCHAR(120) NOT NULL DEFAULT '' AFTER proveedor");
+            $wpdb->query("ALTER TABLE {$table} ADD KEY usuario_portal (usuario_portal)");
+        }
     }
 
     public static function activate() {
@@ -40,6 +53,7 @@ class WPFPP_Facturas_Portal {
             id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             created_at DATETIME NOT NULL,
             proveedor VARCHAR(190) NOT NULL DEFAULT '',
+            usuario_portal VARCHAR(120) NOT NULL DEFAULT '',
             folio VARCHAR(80) NOT NULL DEFAULT '',
             fecha_factura DATE NULL,
             monto DECIMAL(14,2) NULL,
@@ -54,6 +68,7 @@ class WPFPP_Facturas_Portal {
             PRIMARY KEY (id),
             KEY estado (estado),
             KEY proveedor (proveedor),
+            KEY usuario_portal (usuario_portal),
             KEY folio (folio),
             KEY created_at (created_at)
         ) {$charset_collate};";
@@ -68,6 +83,7 @@ class WPFPP_Facturas_Portal {
             $settings['session_hours'] = isset($settings['session_hours']) ? (int)$settings['session_hours'] : 12;
             $settings['default_view'] = isset($settings['default_view']) ? sanitize_text_field($settings['default_view']) : 'pendiente';
             $settings['portal_path'] = isset($settings['portal_path']) ? self::sanitize_portal_path($settings['portal_path']) : '/portal-facturas';
+            $settings['portal_users'] = isset($settings['portal_users']) && is_array($settings['portal_users']) ? $settings['portal_users'] : [];
             update_option(self::OPTION_SETTINGS, $settings, false);
             update_option(self::OPTION_PLAIN_PASS, $plain, false);
         }
@@ -78,6 +94,70 @@ class WPFPP_Facturas_Portal {
         $out = '';
         for ($i=0; $i<14; $i++) $out .= $chars[random_int(0, strlen($chars)-1)];
         return $out;
+    }
+
+
+    private static function normalize_user_key($name) {
+        $name = sanitize_text_field((string)$name);
+        $name = strtolower(trim($name));
+        return preg_replace('/[^a-z0-9._-]/', '', $name);
+    }
+
+    private static function portal_users() {
+        $settings = self::settings();
+        $users = isset($settings['portal_users']) && is_array($settings['portal_users']) ? $settings['portal_users'] : [];
+        $out = [];
+        foreach ($users as $u) {
+            if (empty($u['key']) || empty($u['password_hash'])) continue;
+            $key = self::normalize_user_key($u['key']);
+            if ($key === '') continue;
+            $out[$key] = [
+                'key' => $key,
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => (string)$u['password_hash'],
+            ];
+        }
+        return $out;
+    }
+
+    private static function portal_users_for_select() {
+        $users = self::portal_users();
+        $out = [];
+        foreach ($users as $u) {
+            $out[$u['key']] = $u['name'];
+        }
+        return $out;
+    }
+
+    private static function legacy_portal_user() {
+        $settings = self::settings();
+        if (empty($settings['password_hash'])) return null;
+
+        return [
+            'key' => self::LEGACY_USER_KEY,
+            'name' => 'Acceso general',
+            'password_hash' => (string)$settings['password_hash'],
+            'legacy' => true,
+        ];
+    }
+
+    private static function parse_users_raw($raw) {
+        $raw = is_string($raw) ? $raw : '';
+        $lines = preg_split('/\r\n|\r|\n/', $raw);
+        $users = [];
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || strpos($line, ':') === false) continue;
+            [$name, $pass] = array_map('trim', explode(':', $line, 2));
+            $key = self::normalize_user_key($name);
+            if ($key === '' || $pass === '') continue;
+            $users[] = [
+                'key' => $key,
+                'name' => sanitize_text_field($name),
+                'password_hash' => wp_hash_password($pass),
+            ];
+        }
+        return $users;
     }
 
     private static function sanitize_portal_path($path) {
@@ -119,10 +199,83 @@ class WPFPP_Facturas_Portal {
             'session_hours' => 12,
             'default_view' => 'pendiente',
             'portal_path' => '/portal-facturas',
+            'portal_users' => [],
         ];
         $s = get_option(self::OPTION_SETTINGS, []);
         if (!is_array($s)) $s = [];
         return array_merge($defaults, $s);
+    }
+
+    private static function save_portal_users($users) {
+        $clean = self::sanitize_portal_users_array($users);
+
+        $current = get_option(self::OPTION_SETTINGS, []);
+        if (!is_array($current)) $current = [];
+
+        $current_users = isset($current['portal_users']) && is_array($current['portal_users']) ? $current['portal_users'] : [];
+        $current_clean = [];
+        foreach ($current_users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '') continue;
+            $current_clean[$key] = [
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        $next_clean = [];
+        foreach ($clean as $u) {
+            $next_clean[$u['key']] = [
+                'name' => $u['name'],
+                'password_hash' => $u['password_hash'],
+            ];
+        }
+
+        if ($current_clean == $next_clean) {
+            return true;
+        }
+
+        $current['portal_users'] = $clean;
+        $updated = update_option(self::OPTION_SETTINGS, $current, false);
+        if ($updated) return true;
+
+        $reloaded = get_option(self::OPTION_SETTINGS, []);
+        if (!is_array($reloaded)) return false;
+        $reloaded_users = isset($reloaded['portal_users']) && is_array($reloaded['portal_users']) ? $reloaded['portal_users'] : [];
+
+        $reloaded_clean = [];
+        foreach ($reloaded_users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '') continue;
+            $reloaded_clean[$key] = [
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        return $reloaded_clean == $next_clean;
+    }
+
+    private static function sanitize_portal_users_array($users) {
+        $users = is_array($users) ? $users : [];
+        $clean = [];
+        $seen = [];
+
+        foreach ($users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '' || isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $clean[] = [
+                'key' => $key,
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        return $clean;
     }
 
     public static function table_name() {
@@ -160,6 +313,17 @@ class WPFPP_Facturas_Portal {
         $out['default_view']  = isset($input['default_view']) ? sanitize_text_field($input['default_view']) : $current['default_view'];
         $out['portal_path']   = isset($input['portal_path']) ? self::sanitize_portal_path($input['portal_path']) : $current['portal_path'];
 
+        if (isset($input['portal_users']) && is_array($input['portal_users'])) {
+            $out['portal_users'] = self::sanitize_portal_users_array($input['portal_users']);
+        }
+
+        if (isset($input['portal_users_raw'])) {
+            $parsed_users = self::parse_users_raw((string)$input['portal_users_raw']);
+            if (!empty($parsed_users)) {
+                $out['portal_users'] = $parsed_users;
+            }
+        }
+
         // Cambio de clave
         if (!empty($input['new_password'])) {
             $new = (string)$input['new_password'];
@@ -188,12 +352,24 @@ class WPFPP_Facturas_Portal {
     public static function admin_page_list() {
         if (!current_user_can('manage_options')) return;
 
-        // Acciones (marcar cargada / borrar)
+        $bulk_msg = '';
+        $bulk_err = '';
+
+        if (!empty($_POST['wpfp_assign_all']) && check_admin_referer('wpfp_assign_all_facturas', 'wpfp_assign_all_nonce')) {
+            $target_user = self::normalize_user_key($_POST['assign_all_usuario_portal'] ?? '');
+            if ($target_user === '') {
+                $bulk_err = 'Debes seleccionar un usuario portal para la asignación masiva.';
+            } else {
+                $updated = self::assign_all_facturas_to_user($target_user);
+                $bulk_msg = sprintf('Asignación masiva completada: %d factura(s) asignada(s) a %s.', (int)$updated, $target_user);
+            }
+        }
+
+        // Acciones (marcar pendiente / borrar)
         if (!empty($_POST['wpfp_action']) && check_admin_referer('wpfp_admin_action', 'wpfp_nonce')) {
             $action = sanitize_text_field($_POST['wpfp_action']);
             $ids = isset($_POST['ids']) ? array_map('intval', (array)$_POST['ids']) : [];
             if ($ids) {
-                if ($action === 'mark_loaded') self::mark_loaded($ids);
                 if ($action === 'mark_pending') self::mark_pending($ids);
                 if ($action === 'delete') self::delete_facturas($ids);
             }
@@ -202,24 +378,52 @@ class WPFPP_Facturas_Portal {
         $estado = isset($_GET['estado']) ? sanitize_text_field($_GET['estado']) : '';
         $proveedor = isset($_GET['proveedor']) ? sanitize_text_field($_GET['proveedor']) : '';
         $q = isset($_GET['q']) ? sanitize_text_field($_GET['q']) : '';
+        $usuario_portal = isset($_GET['usuario_portal']) ? self::normalize_user_key($_GET['usuario_portal']) : '';
 
         $rows = self::get_facturas([
             'estado' => $estado,
             'proveedor' => $proveedor,
+            'usuario_portal' => $usuario_portal,
             'q' => $q,
             'limit' => 500
         ]);
 
-        $proveedores = self::get_proveedores();
+        $proveedores = self::get_proveedores($estado, null, null, true, $usuario_portal);
+        $portal_users = self::portal_users_for_select();
+        if (empty($portal_users)) {
+            $bulk_err = 'No hay usuarios portal configurados. Crea al menos uno en Ajustes.';
+        }
 
         echo '<div class="wrap"><h1>Portal Facturas</h1>';
+        if ($bulk_msg) echo '<div class="notice notice-success"><p>'.esc_html($bulk_msg).'</p></div>';
+        if ($bulk_err) echo '<div class="notice notice-error"><p>'.esc_html($bulk_err).'</p></div>';
+
+        echo '<form method="post" class="wpfp-bulk" style="margin:14px 0;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_assign_all_facturas', 'wpfp_assign_all_nonce');
+        echo '<strong>Asignación masiva global</strong><br>';
+        echo '<span class="description">Asignar todas las facturas existentes a un usuario portal.</span><br><br>';
+        echo '<select name="assign_all_usuario_portal" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar usuario portal —</option>';
+        foreach ($portal_users as $uk=>$uname) {
+            echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        }
+        echo '</select> ';
+        echo '<button class="button" name="wpfp_assign_all" value="1" '.disabled(empty($portal_users), true, false).' onclick="return confirm(\'¿Asignar todas las facturas al usuario seleccionado?\');">Asignar todas</button>';
+        echo '</form>';
 
         echo '<form method="get" class="wpfp-filters">';
         echo '<input type="hidden" name="page" value="wpfp_facturas" />';
         echo '<select name="estado">';
         echo '<option value="">— Todos los estados —</option>';
-        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'] as $k=>$label) {
+        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado'] as $k=>$label) {
             printf('<option value="%s"%s>%s</option>', esc_attr($k), selected($estado, $k, false), esc_html($label));
+        }
+        echo '</select>';
+
+        echo '<select name="usuario_portal">';
+        echo '<option value="">— Todos los usuarios portal —</option>';
+        foreach ($portal_users as $uk=>$uname) {
+            printf('<option value="%s"%s>%s</option>', esc_attr($uk), selected($usuario_portal, $uk, false), esc_html($uname));
         }
         echo '</select>';
 
@@ -239,7 +443,6 @@ class WPFPP_Facturas_Portal {
         echo '<div class="wpfp-bulk">';
         echo '<select name="wpfp_action" required>';
         echo '<option value="">— Acción masiva —</option>';
-        echo '<option value="mark_loaded">Marcar como Cargada</option>';
         echo '<option value="mark_pending">Marcar como Pendiente</option>';
         echo '<option value="delete">Eliminar</option>';
         echo '</select> ';
@@ -250,6 +453,7 @@ class WPFPP_Facturas_Portal {
         echo '<thead><tr>
             <th style="width:28px;"><input type="checkbox" id="wpfp-checkall" /></th>
             <th>ID</th>
+            <th>Usuario</th>
             <th>Proveedor</th>
             <th>Folio</th>
             <th>Fecha</th>
@@ -258,7 +462,6 @@ class WPFPP_Facturas_Portal {
             <th>Observación</th>
             <th>PDF</th>
             <th>Asignado</th>
-            <th>Cargada</th>
             <th>Acciones</th>
         </tr></thead><tbody>';
 
@@ -271,6 +474,7 @@ class WPFPP_Facturas_Portal {
                 echo '<tr>';
                 echo '<td><input type="checkbox" name="ids[]" value="'.(int)$r->id.'"></td>';
                 echo '<td>'.(int)$r->id.'</td>';
+                echo '<td>'.esc_html($r->usuario_portal ? $r->usuario_portal : '—').'</td>';
                 echo '<td>'.esc_html($r->proveedor).'</td>';
                 echo '<td>'.esc_html($r->folio).'</td>';
                 echo '<td>'.esc_html($r->fecha_factura ? $r->fecha_factura : '—').'</td>';
@@ -279,7 +483,6 @@ class WPFPP_Facturas_Portal {
                 echo '<td>'.esc_html(wp_trim_words((string)$r->observacion, 15)).'</td>';
                 echo '<td>'.$pdf.'</td>';
                 echo '<td>'.esc_html($r->assigned_at ? $r->assigned_at : '—').'</td>';
-                echo '<td>'.esc_html($r->loaded_at ? $r->loaded_at : '—').'</td>';
                 $edit_url = admin_url('admin.php?page=wpfp_facturas_edit&id='.(int)$r->id);
                 echo '<td><a class="button button-small" href="'.esc_url($edit_url).'">Editar</a></td>';
                 echo '</tr>';
@@ -316,6 +519,7 @@ class WPFPP_Facturas_Portal {
                 'monto' => sanitize_text_field($_POST['monto'] ?? ''),
                 'moneda' => sanitize_text_field($_POST['moneda'] ?? 'CLP'),
                 'pdf_url' => esc_url_raw($_POST['pdf_url'] ?? ''),
+                'usuario_portal' => self::normalize_user_key($_POST['usuario_portal'] ?? ''),
                 'estado' => 'pendiente',
             ];
             $id = self::insert_factura($data);
@@ -327,7 +531,12 @@ class WPFPP_Facturas_Portal {
 
         echo '<form method="post" class="wpfp-form">';
         wp_nonce_field('wpfp_add_factura', 'wpfp_nonce');
+        $portal_users = self::portal_users_for_select();
         echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario portal</label></th><td><select name="usuario_portal" required>';
+        echo '<option value="">— Seleccionar —</option>';
+        foreach ($portal_users as $uk=>$uname) { echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>'; }
+        echo '</select></td></tr>';
         echo '<tr><th><label>Proveedor</label></th><td><input name="proveedor" required class="regular-text" /></td></tr>';
         echo '<tr><th><label>Folio</label></th><td><input name="folio" class="regular-text" /></td></tr>';
         echo '<tr><th><label>Fecha factura</label></th><td><input name="fecha_factura" type="date" /></td></tr>';
@@ -367,6 +576,7 @@ class WPFPP_Facturas_Portal {
                 'pdf_url' => esc_url_raw($_POST['pdf_url'] ?? ''),
                 'observacion' => sanitize_textarea_field($_POST['observacion'] ?? ''),
                 'estado' => sanitize_text_field($_POST['estado'] ?? 'pendiente'),
+                'usuario_portal' => self::normalize_user_key($_POST['usuario_portal'] ?? ''),
             ];
 
             $ok = self::update_factura($id, $data);
@@ -391,7 +601,12 @@ class WPFPP_Facturas_Portal {
         echo '<form method="post" class="wpfp-form">';
         wp_nonce_field('wpfp_edit_factura', 'wpfp_nonce');
 
+        $portal_users = self::portal_users_for_select();
         echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario portal</label></th><td><select name="usuario_portal" required>';
+        echo '<option value="">— Seleccionar —</option>';
+        foreach ($portal_users as $uk=>$uname) { echo '<option value="'.esc_attr($uk).'" '.selected((string)$row->usuario_portal, $uk, false).'>'.esc_html($uname).' ('.esc_html($uk).')</option>'; }
+        echo '</select></td></tr>';
         echo '<tr><th><label>Proveedor</label></th><td><input name="proveedor" required class="regular-text" value="'.esc_attr($row->proveedor).'" /></td></tr>';
         echo '<tr><th><label>Folio</label></th><td><input name="folio" class="regular-text" value="'.esc_attr($row->folio).'" /></td></tr>';
         echo '<tr><th><label>Fecha factura</label></th><td><input name="fecha_factura" type="date" value="'.esc_attr($row->fecha_factura ? $row->fecha_factura : '').'" /></td></tr>';
@@ -402,7 +617,7 @@ class WPFPP_Facturas_Portal {
         echo '<tr><th><label>Observación</label></th><td><textarea name="observacion" rows="4" class="large-text" placeholder="Observación / asignación">'.esc_textarea((string)$row->observacion).'</textarea></td></tr>';
 
         echo '<tr><th><label>Estado</label></th><td><select name="estado">';
-        $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'];
+        $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado'];
         foreach ($states as $k=>$label) {
             echo '<option value="'.esc_attr($k).'" '.selected($row->estado, $k, false).'>'.esc_html($label).'</option>';
         }
@@ -412,30 +627,149 @@ class WPFPP_Facturas_Portal {
         echo esc_html($row->assigned_at ? $row->assigned_at : '—');
         echo '</td></tr>';
 
-        echo '<tr><th><label>Cargada</label></th><td>';
-        echo esc_html($row->loaded_at ? $row->loaded_at : '—');
-        echo '</td></tr>';
-
         echo '</tbody></table>';
 
         echo '<p><button class="button button-primary" name="wpfp_save" value="1">Guardar cambios</button></p>';
         echo '</form></div>';
     }
 
-
     public static function admin_page_settings() {
         if (!current_user_can('manage_options')) return;
 
-        $settings = self::settings();
-        $plain = get_option(self::OPTION_PLAIN_PASS, '');
+        $bulk_msg = '';
+        $bulk_err = '';
+        $user_msg = '';
+        $user_err = '';
 
-        echo '<div class="wrap"><h1>Ajustes — Portal Facturas</h1>';
+        if (!empty($_POST['wpfp_user_action']) && check_admin_referer('wpfp_user_management', 'wpfp_user_management_nonce')) {
+            $action = sanitize_text_field($_POST['wpfp_user_action']);
+            $settings = self::settings();
+            $users = isset($settings['portal_users']) && is_array($settings['portal_users']) ? $settings['portal_users'] : [];
 
-        if ($plain) {
-            echo '<div class="notice notice-warning"><p><strong>Clave actual (temporal):</strong> <code>'.esc_html($plain).'</code> — Cámbiala y este aviso desaparecerá.</p></div>';
-        } else {
-            echo '<div class="notice notice-info"><p>Si no recuerdas la clave, puedes regenerarla abajo.</p></div>';
+            if ($action === 'add') {
+                $new_key = self::normalize_user_key($_POST['new_user_key'] ?? '');
+                $new_name = sanitize_text_field($_POST['new_user_name'] ?? $new_key);
+                $new_pass = (string)($_POST['new_user_password'] ?? '');
+
+                if ($new_key === '' || $new_pass === '') {
+                    $user_err = 'Para crear usuario debes ingresar usuario (key) y clave.';
+                } else {
+                    $exists = false;
+                    foreach ($users as $u) {
+                        if (self::normalize_user_key($u['key'] ?? '') === $new_key) {
+                            $exists = true;
+                            break;
+                        }
+                    }
+                    if ($exists) {
+                        $user_err = 'Ese usuario ya existe.';
+                    } else {
+                        $users[] = [
+                            'key' => $new_key,
+                            'name' => $new_name !== '' ? $new_name : $new_key,
+                            'password_hash' => wp_hash_password($new_pass),
+                        ];
+                        if (self::save_portal_users($users)) {
+                            $user_msg = sprintf('Usuario %s creado.', $new_key);
+                        } else {
+                            $user_err = 'No se pudo guardar el usuario. Intenta nuevamente.';
+                        }
+                    }
+                }
+            }
+
+            if ($action === 'update') {
+                $source_key = self::normalize_user_key($_POST['source_user_key'] ?? '');
+                $target_key = self::normalize_user_key($_POST['edit_user_key'] ?? '');
+                $target_name = sanitize_text_field($_POST['edit_user_name'] ?? $target_key);
+                $target_pass = (string)($_POST['edit_user_password'] ?? '');
+
+                if ($source_key === '' || $target_key === '') {
+                    $user_err = 'Debes seleccionar un usuario origen e indicar el usuario destino.';
+                } else {
+                    $found_index = -1;
+                    foreach ($users as $idx => $u) {
+                        if (self::normalize_user_key($u['key'] ?? '') === $source_key) {
+                            $found_index = $idx;
+                            break;
+                        }
+                    }
+
+                    if ($found_index < 0) {
+                        $user_err = 'El usuario a editar no existe.';
+                    } else {
+                        foreach ($users as $idx => $u) {
+                            if ($idx === $found_index) continue;
+                            if (self::normalize_user_key($u['key'] ?? '') === $target_key) {
+                                $user_err = 'El nuevo usuario (key) ya existe.';
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($user_err === '') {
+                        $current_hash = (string)($users[$found_index]['password_hash'] ?? '');
+                        $users[$found_index] = [
+                            'key' => $target_key,
+                            'name' => $target_name !== '' ? $target_name : $target_key,
+                            'password_hash' => $target_pass !== '' ? wp_hash_password($target_pass) : $current_hash,
+                        ];
+
+                        if (self::save_portal_users(array_values($users))) {
+                            $user_msg = sprintf('Usuario %s actualizado.', $source_key);
+                        } else {
+                            $user_err = 'No se pudo actualizar el usuario. Intenta nuevamente.';
+                        }
+                    }
+                }
+            }
+
+            if ($action === 'delete') {
+                $delete_key = self::normalize_user_key($_POST['delete_user_key'] ?? '');
+                if ($delete_key === '') {
+                    $user_err = 'Debes seleccionar un usuario para eliminar.';
+                } else {
+                    $new_users = [];
+                    $deleted = false;
+                    foreach ($users as $u) {
+                        $uk = self::normalize_user_key($u['key'] ?? '');
+                        if ($uk === $delete_key) {
+                            $deleted = true;
+                            continue;
+                        }
+                        $new_users[] = $u;
+                    }
+
+                    if (!$deleted) {
+                        $user_err = 'El usuario seleccionado no existe.';
+                    } else {
+                        if (self::save_portal_users(array_values($new_users))) {
+                            $user_msg = sprintf('Usuario %s eliminado. Sus facturas quedan sin reasignar.', $delete_key);
+                        } else {
+                            $user_err = 'No se pudo eliminar el usuario. Intenta nuevamente.';
+                        }
+                    }
+                }
+            }
         }
+
+        if (!empty($_POST['wpfp_assign_all_settings']) && check_admin_referer('wpfp_assign_all_settings', 'wpfp_assign_all_settings_nonce')) {
+            $target_user = self::normalize_user_key($_POST['assign_all_usuario_portal'] ?? '');
+            if ($target_user === '') {
+                $bulk_err = 'Debes seleccionar un usuario portal para la asignación masiva.';
+            } else {
+                $updated = self::assign_all_facturas_to_user($target_user);
+                $bulk_msg = sprintf('Asignación masiva completada: %d factura(s) asignada(s) a %s.', (int)$updated, $target_user);
+            }
+        }
+
+        $settings = self::settings();
+        $portal_users = self::portal_users_for_select();
+        echo '<div class="wrap"><h1>Ajustes — Portal Facturas</h1>';
+        if ($user_msg) echo '<div class="notice notice-success"><p>'.esc_html($user_msg).'</p></div>';
+        if ($user_err) echo '<div class="notice notice-error"><p>'.esc_html($user_err).'</p></div>';
+        if ($bulk_msg) echo '<div class="notice notice-success"><p>'.esc_html($bulk_msg).'</p></div>';
+        if ($bulk_err) echo '<div class="notice notice-error"><p>'.esc_html($bulk_err).'</p></div>';
 
         echo '<form method="post" action="options.php" class="wpfp-form">';
         settings_fields('wpfp_settings_group');
@@ -449,7 +783,7 @@ class WPFPP_Facturas_Portal {
 
         echo '<tr><th><label>Vista por defecto</label></th><td>';
         echo '<select name="'.esc_attr(self::OPTION_SETTINGS).'[default_view]">';
-        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada','todas'=>'Todas'] as $k=>$label) {
+        foreach (['pendiente'=>'Pendiente','asignado'=>'Asignado','todas'=>'Todas'] as $k=>$label) {
             $val = ($k==='todas') ? '' : $k;
             $sel = selected($settings['default_view'], ($k==='todas'?'':$k), false);
             echo '<option value="'.esc_attr($val).'" '.$sel.'>'.esc_html($label).'</option>';
@@ -463,16 +797,83 @@ class WPFPP_Facturas_Portal {
         echo '<p class="description"><strong>Importante:</strong> esta ruta no debe coincidir con una página existente de WordPress.</p>';
         echo '<p><a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p></td></tr>';
 
-        echo '<tr><th><label>Nueva clave</label></th><td>';
-        printf('<input name="%s[new_password]" type="text" class="regular-text" placeholder="Deja vacío para mantener" />', esc_attr(self::OPTION_SETTINGS));
-        echo '<p class="description">Al guardar una nueva clave, se elimina la clave temporal almacenada.</p></td></tr>';
-
-        echo '<tr><th><label>Regenerar clave</label></th><td>';
-        printf('<label><input name="%s[regenerate_password]" type="checkbox" value="1" /> Generar una clave nueva aleatoria</label>', esc_attr(self::OPTION_SETTINGS));
+        echo '<tr><th><label>Usuarios portal activos</label></th><td>';
+        if (!$portal_users) {
+            echo '<em>No hay usuarios configurados.</em>';
+        } else {
+            echo '<ul style="margin:0;">';
+            foreach (self::portal_users() as $u) {
+                echo '<li><strong>'.esc_html($u['name']).'</strong> <code>'.esc_html($u['key']).'</code></li>';
+            }
+            echo '</ul>';
+        }
         echo '</td></tr>';
+
 
         echo '</tbody></table>';
         submit_button('Guardar ajustes');
+        echo '</form>';
+
+        echo '<hr /><h2>Gestión de usuarios portal</h2>';
+        echo '<p class="description">Administra usuarios individuales del portal desde formularios dedicados (alta, edición y eliminación).</p>';
+
+        echo '<form method="post" class="wpfp-form" style="margin-top:16px;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_user_management', 'wpfp_user_management_nonce');
+        echo '<input type="hidden" name="wpfp_user_action" value="add" />';
+        echo '<h3 style="margin-top:0;">Crear usuario</h3>';
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario (key)</label></th><td><input name="new_user_key" class="regular-text" placeholder="cliente-a" required /></td></tr>';
+        echo '<tr><th><label>Nombre visible</label></th><td><input name="new_user_name" class="regular-text" placeholder="Cliente A" /></td></tr>';
+        echo '<tr><th><label>Clave</label></th><td><input name="new_user_password" type="password" class="regular-text" required /></td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button button-primary">Crear usuario</button></p>';
+        echo '</form>';
+
+        echo '<form method="post" class="wpfp-form" style="margin-top:16px;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_user_management', 'wpfp_user_management_nonce');
+        echo '<input type="hidden" name="wpfp_user_action" value="update" />';
+        echo '<h3 style="margin-top:0;">Editar usuario</h3>';
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario a editar</label></th><td><select name="source_user_key" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar —</option>';
+        foreach ($portal_users as $uk=>$uname) echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        echo '</select></td></tr>';
+        echo '<tr><th><label>Nuevo usuario (key)</label></th><td><input name="edit_user_key" class="regular-text" required '.disabled(empty($portal_users), true, false).' /></td></tr>';
+        echo '<tr><th><label>Nuevo nombre visible</label></th><td><input name="edit_user_name" class="regular-text" '.disabled(empty($portal_users), true, false).' /></td></tr>';
+        echo '<tr><th><label>Nueva clave (opcional)</label></th><td><input name="edit_user_password" type="password" class="regular-text" '.disabled(empty($portal_users), true, false).' />';
+        echo '<p class="description">Si la dejas vacía, se mantiene la clave actual.</p></td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button" '.disabled(empty($portal_users), true, false).'>Guardar cambios de usuario</button></p>';
+        echo '</form>';
+
+        echo '<form method="post" class="wpfp-form" style="margin-top:16px;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_user_management', 'wpfp_user_management_nonce');
+        echo '<input type="hidden" name="wpfp_user_action" value="delete" />';
+        echo '<h3 style="margin-top:0;">Eliminar usuario</h3>';
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario a eliminar</label></th><td><select name="delete_user_key" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar —</option>';
+        foreach ($portal_users as $uk=>$uname) echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        echo '</select>';
+        echo '<p class="description">Las facturas quedan con su <code>usuario_portal</code> actual (sin reasignación automática).</p></td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button" '.disabled(empty($portal_users), true, false).' onclick="return confirm(\'¿Eliminar usuario portal seleccionado?\');">Eliminar usuario</button></p>';
+        echo '</form>';
+
+        echo '<hr /><h2>Asignación masiva de facturas</h2>';
+        echo '<form method="post" class="wpfp-form">';
+        wp_nonce_field('wpfp_assign_all_settings', 'wpfp_assign_all_settings_nonce');
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario destino</label></th><td><select name="assign_all_usuario_portal" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar usuario portal —</option>';
+        foreach ($portal_users as $uk=>$uname) {
+            echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">Esta acción reasigna todas las facturas existentes al usuario seleccionado.</p>';
+        echo '</td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button" name="wpfp_assign_all_settings" value="1" '.disabled(empty($portal_users), true, false).' onclick="return confirm(\'¿Asignar todas las facturas al usuario seleccionado?\');">Asignar todas las facturas</button></p>';
         echo '</form>';
 
         echo '<hr /><h2>Recomendación de seguridad</h2>';
@@ -538,9 +939,17 @@ class WPFPP_Facturas_Portal {
         // Logout via query param
         if (isset($_GET['wpfp_logout'])) {
             self::clear_cookie();
+            wp_safe_redirect(remove_query_arg('wpfp_logout', self::current_url_no_post()));
+            exit;
         }
 
         if (!self::is_portal_authed()) {
+            return self::render_login();
+        }
+
+        $portal_user = self::current_portal_user();
+        if (!$portal_user) {
+            self::clear_cookie();
             return self::render_login();
         }
 
@@ -555,9 +964,11 @@ class WPFPP_Facturas_Portal {
         $date_from = null;
         $date_to = null;
         $ym = null;
+        $month_label = '';
         $include_no_date = true;
 
         if ($view === 'monthly') {
+            $include_no_date = false;
             $ym = isset($_GET['ym']) ? sanitize_text_field($_GET['ym']) : '';
             if (!preg_match('/^\d{4}-\d{2}$/', $ym)) {
                 $ym = wp_date('Y-m', current_time('timestamp'));
@@ -573,16 +984,20 @@ class WPFPP_Facturas_Portal {
             $dt2 = clone $dt;
             $dt2->modify('first day of next month');
             $date_to = $dt2->format('Y-m-d');
+            $month_label = wp_date('F Y', $dt->getTimestamp());
         }
 
         $order = ($view === 'monthly')
             ? 'proveedor ASC, fecha_factura DESC, created_at DESC'
             : 'proveedor ASC, created_at DESC';
 
+        $is_legacy_login = !empty($portal_user['legacy']);
+
         $rows = self::get_facturas([
             'estado' => $estado,
             'proveedor' => $proveedor,
             'q' => $q,
+            'usuario_portal' => $is_legacy_login ? '' : $portal_user['key'],
             'limit' => 800,
             'order' => $order,
             'date_from' => $date_from,
@@ -590,16 +1005,23 @@ class WPFPP_Facturas_Portal {
             'include_no_date' => $include_no_date,
         ]);
 
-        $proveedores = self::get_proveedores($estado, $date_from, $date_to, $include_no_date);
+        $proveedores = self::get_proveedores($estado, $date_from, $date_to, $include_no_date, $is_legacy_login ? '' : $portal_user['key']);
 
         // Totales de la vista actual
         $total_count = is_array($rows) ? count($rows) : 0;
         $total_monto = 0.0;
+        $state_totals = ['pendiente'=>0, 'asignado'=>0];
+        $providers_in_view = [];
+
         if ($rows) {
             foreach ($rows as $r) {
                 if (!is_null($r->monto)) $total_monto += (float)$r->monto;
+                if (isset($state_totals[$r->estado])) $state_totals[$r->estado]++;
+                if (!empty($r->proveedor)) $providers_in_view[$r->proveedor] = true;
             }
         }
+
+        $providers_count = count($providers_in_view);
 
         // Prev/next mes (solo monthly)
         $prev_ym = $next_ym = '';
@@ -611,16 +1033,26 @@ class WPFPP_Facturas_Portal {
             $next_ym = $n->format('Y-m');
         }
 
+        $list_url = remove_query_arg(['view', 'ym']);
+        $monthly_url = add_query_arg([
+            'view' => 'monthly',
+            'ym' => $ym ?: wp_date('Y-m', current_time('timestamp')),
+        ], remove_query_arg(['view']));
+
         ob_start();
         ?>
         <div class="wpfp-portal">
             <div class="wpfp-topbar">
                 <div>
                     <div class="wpfp-title"><?php echo ($view === 'monthly') ? 'Facturas — Vista mensual' : 'Bandeja de Facturas'; ?></div>
-                    <div class="wpfp-subtitle">Portal standalone (sin theme) para revisión y asignación de facturas.</div>
+                    <div class="wpfp-subtitle">Portal standalone (sin theme) para revisión y asignación de facturas. Usuario: <?php echo esc_html($portal_user['name']); ?></div>
                 </div>
                 <div class="wpfp-actions">
-                    <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout','1')); ?>">Salir</a>
+                    <div class="wpfp-view-switch" role="tablist" aria-label="Cambiar vista de facturas">
+                        <a class="wpfp-switch <?php echo ($view === 'list') ? 'is-active' : ''; ?>" href="<?php echo esc_url($list_url); ?>" role="tab" aria-selected="<?php echo ($view === 'list') ? 'true' : 'false'; ?>">Listado</a>
+                        <a class="wpfp-switch <?php echo ($view === 'monthly') ? 'is-active' : ''; ?>" href="<?php echo esc_url($monthly_url); ?>" role="tab" aria-selected="<?php echo ($view === 'monthly') ? 'true' : 'false'; ?>">Mensual</a>
+                    </div>
+                    <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout', '1', remove_query_arg('wpfp_logout', self::current_url_no_post()))); ?>">Salir</a>
                 </div>
             </div>
 
@@ -636,15 +1068,17 @@ class WPFPP_Facturas_Portal {
                 <?php if ($view === 'monthly'): ?>
                     <div class="wpfp-monthbar">
                         <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$prev_ym])); ?>" aria-label="Mes anterior">◀</a>
-                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" />
+                        <input type="month" name="ym" value="<?php echo esc_attr($ym); ?>" aria-label="Seleccionar mes" data-wpfp-autosubmit="month" />
                         <a class="wpfp-monthbtn" href="<?php echo esc_url(add_query_arg(['ym'=>$next_ym])); ?>" aria-label="Mes siguiente">▶</a>
+                        <a class="wpfp-chip" href="<?php echo esc_url(add_query_arg(['ym'=>wp_date('Y-m', current_time('timestamp'))])); ?>">Mes actual</a>
+                        <span class="wpfp-monthlabel"><?php echo esc_html($month_label); ?></span>
                     </div>
                 <?php endif; ?>
 
                 <select name="estado" aria-label="Filtrar por estado">
                     <option value="">— Todos —</option>
                     <?php
-                    $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado','duda'=>'Duda','cargada'=>'Cargada'];
+                    $states = ['pendiente'=>'Pendiente','asignado'=>'Asignado'];
                     foreach ($states as $k=>$label) {
                         printf('<option value="%s"%s>%s</option>', esc_attr($k), selected($estado, $k, false), esc_html($label));
                     }
@@ -666,8 +1100,16 @@ class WPFPP_Facturas_Portal {
             <div class="wpfp-summary">
                 <div class="wpfp-card"><span>Total en vista</span><strong><?php echo (int)$total_count; ?></strong></div>
                 <div class="wpfp-card"><span>Suma estimada</span><strong><?php echo number_format($total_monto, 0, ',', '.'); ?> CLP</strong></div>
+                <div class="wpfp-card"><span>Proveedores en vista</span><strong><?php echo (int)$providers_count; ?></strong></div>
                 <div class="wpfp-card"><span>Acción rápida</span><strong>Enter = Guardar fila</strong></div>
             </div>
+
+            <?php if ($view === 'monthly'): ?>
+            <div class="wpfp-state-summary" aria-label="Resumen por estado del mes">
+                <span class="wpfp-state-item is-pendiente">Pendiente: <strong><?php echo (int)$state_totals['pendiente']; ?></strong></span>
+                <span class="wpfp-state-item is-asignado">Asignado: <strong><?php echo (int)$state_totals['asignado']; ?></strong></span>
+            </div>
+            <?php endif; ?>
 
             <div class="wpfp-hint">
                 Escribe una observación y presiona <strong>Guardar</strong>. Al guardar, la factura pasa a <strong>Asignado</strong> automáticamente.
@@ -677,7 +1119,8 @@ class WPFPP_Facturas_Portal {
                 <table class="wpfp-table">
                     <thead>
                         <tr>
-                            <th>Proveedor</th>
+                            <th>Usuario</th>
+            <th>Proveedor</th>
                             <th>Folio</th>
                             <th>Fecha</th>
                             <th>Monto</th>
@@ -730,8 +1173,9 @@ class WPFPP_Facturas_Portal {
         $err = '';
         if (!empty($_POST['wpfp_pass']) && isset($_POST['wpfp_login']) && wp_verify_nonce($_POST['wpfp_login'], 'wpfp_login')) {
             $pass = (string)$_POST['wpfp_pass'];
-            if (self::check_password($pass)) {
-                self::set_cookie();
+            $authed_user = self::check_password($pass);
+            if ($authed_user) {
+                self::set_cookie($authed_user['key']);
                 // redirect to avoid resubmission
                 wp_safe_redirect(self::current_url_no_post());
                 exit;
@@ -757,7 +1201,9 @@ class WPFPP_Facturas_Portal {
     }
 
     private static function current_url_no_post() {
-        $url = (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+        $host = isset($_SERVER['HTTP_HOST']) ? (string)$_SERVER['HTTP_HOST'] : '';
+        $uri = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '/';
+        $url = (is_ssl() ? 'https://' : 'http://') . $host . $uri;
         // remove wpnonce / post vars not in query
         return $url;
     }
@@ -765,11 +1211,11 @@ class WPFPP_Facturas_Portal {
     /* ------------------------------
      * Auth cookie
      * ------------------------------ */
-    private static function set_cookie() {
+    private static function set_cookie($user_key) {
         $settings = self::settings();
         $hours = (int)$settings['session_hours'];
         $exp = time() + ($hours * 3600);
-        $payload = ['exp' => $exp, 'v' => 1];
+        $payload = ['exp' => $exp, 'v' => 1, 'usr' => self::normalize_user_key($user_key)];
         $b64 = self::b64url_encode(wp_json_encode($payload));
         $sig = hash_hmac('sha256', $b64, wp_salt('auth'));
         $token = $b64 . '.' . $sig;
@@ -802,19 +1248,33 @@ class WPFPP_Facturas_Portal {
         wp_send_json_success(['ok'=>1]);
     }
 
-    private static function is_portal_authed() {
-        if (empty($_COOKIE[self::COOKIE_NAME])) return false;
+    private static function current_portal_user() {
+        if (empty($_COOKIE[self::COOKIE_NAME])) return null;
         $token = (string)$_COOKIE[self::COOKIE_NAME];
         $parts = explode('.', $token);
-        if (count($parts) !== 2) return false;
+        if (count($parts) !== 2) return null;
         [$b64, $sig] = $parts;
         $calc = hash_hmac('sha256', $b64, wp_salt('auth'));
-        if (!hash_equals($calc, $sig)) return false;
+        if (!hash_equals($calc, $sig)) return null;
         $payload_json = self::b64url_decode($b64);
         $payload = json_decode($payload_json, true);
-        if (!is_array($payload) || empty($payload['exp'])) return false;
-        if ((int)$payload['exp'] < time()) return false;
-        return true;
+        if (!is_array($payload) || empty($payload['exp']) || !array_key_exists('usr', $payload)) return null;
+        if ((int)$payload['exp'] < time()) return null;
+
+        $users = self::portal_users();
+        $uk = self::normalize_user_key($payload['usr']);
+        if ($uk === '') return null;
+        if (!empty($users[$uk])) return $users[$uk];
+
+        if (empty($users) && $uk === self::LEGACY_USER_KEY) {
+            return self::legacy_portal_user();
+        }
+
+        return null;
+    }
+
+    private static function is_portal_authed() {
+        return (bool) self::current_portal_user();
     }
 
     private static function b64url_encode($data) {
@@ -828,9 +1288,44 @@ class WPFPP_Facturas_Portal {
     }
 
     private static function check_password($pass) {
-        $settings = self::settings();
-        if (empty($settings['password_hash'])) return false;
-        return wp_check_password($pass, $settings['password_hash']);
+        $pass = (string)$pass;
+        if ($pass === '') return false;
+
+        $users = self::portal_users();
+        foreach ($users as $u) {
+            if (wp_check_password($pass, $u['password_hash'])) return $u;
+        }
+
+        if (empty($users)) {
+            $legacy_user = self::legacy_portal_user();
+            if ($legacy_user && wp_check_password($pass, $legacy_user['password_hash'])) {
+                return $legacy_user;
+            }
+        }
+
+        return false;
+    }
+
+    private static function state_transition_payload($current, $new_estado, $actor = 'Admin') {
+        $now = current_time('mysql');
+
+        $assigned_at = $current->assigned_at;
+        $assigned_by = $current->assigned_by;
+
+        if ($new_estado === 'pendiente') {
+            $assigned_at = null;
+            $assigned_by = null;
+        }
+
+        if ($new_estado === 'asignado') {
+            if (!$assigned_at) $assigned_at = $now;
+            if (!$assigned_by) $assigned_by = $actor;
+        }
+
+        return [
+            'assigned_at' => $assigned_at,
+            'assigned_by' => $assigned_by,
+        ];
     }
 
     /* ------------------------------
@@ -850,22 +1345,25 @@ class WPFPP_Facturas_Portal {
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id=%d", $id));
         if (!$row) wp_send_json_error(['message'=>'No existe'], 404);
 
-        // Si está cargada, no permitir cambios
-        if ($row->estado === 'cargada') {
-            wp_send_json_error(['message'=>'Esta factura está marcada como Cargada.'], 409);
+        $portal_user = self::current_portal_user();
+        if (!$portal_user) {
+            wp_send_json_error(['message'=>'No autorizado para esta factura'], 403);
         }
 
-        $now = current_time('mysql');
+        $is_legacy_login = !empty($portal_user['legacy']);
+        if (!$is_legacy_login && $row->usuario_portal !== $portal_user['key']) {
+            wp_send_json_error(['message'=>'No autorizado para esta factura'], 403);
+        }
 
         $new_estado = trim($obs) !== '' ? 'asignado' : 'pendiente';
-        $assigned_at = trim($obs) !== '' ? $now : null;
-        $assigned_by = trim($obs) !== '' ? 'Cliente' : null;
+
+        $state_meta = self::state_transition_payload($row, $new_estado, 'Cliente');
 
         $updated = $wpdb->update($table, [
             'observacion' => $obs,
             'estado' => $new_estado,
-            'assigned_at' => $assigned_at,
-            'assigned_by' => $assigned_by,
+            'assigned_at' => $state_meta['assigned_at'],
+            'assigned_by' => $state_meta['assigned_by'],
         ], ['id' => $id], ['%s','%s','%s','%s'], ['%d']);
 
         if ($updated === false) wp_send_json_error(['message'=>'No se pudo guardar'], 500);
@@ -890,10 +1388,12 @@ class WPFPP_Facturas_Portal {
         $moneda = $data['moneda'] ?? 'CLP';
         $pdf_url = $data['pdf_url'] ?? '';
         $estado = $data['estado'] ?? 'pendiente';
+        $usuario_portal = self::normalize_user_key($data['usuario_portal'] ?? '');
 
         $ok = $wpdb->insert($table, [
             'created_at' => current_time('mysql'),
             'proveedor' => $proveedor,
+            'usuario_portal' => $usuario_portal,
             'folio' => $folio,
             'fecha_factura' => $fecha_factura ?: null,
             'monto' => $monto,
@@ -901,7 +1401,7 @@ class WPFPP_Facturas_Portal {
             'pdf_url' => $pdf_url,
             'observacion' => '',
             'estado' => $estado,
-        ], ['%s','%s','%s','%s','%f','%s','%s','%s','%s']);
+        ], ['%s','%s','%s','%s','%s','%f','%s','%s','%s','%s']);
 
         return $ok ? (int)$wpdb->insert_id : 0;
     }
@@ -921,10 +1421,11 @@ class WPFPP_Facturas_Portal {
         $current = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id=%d", $id));
         if (!$current) return false;
 
-        $allowed_states = ['pendiente','asignado','duda','cargada'];
+        $allowed_states = ['pendiente','asignado'];
 
         $proveedor = sanitize_text_field($data['proveedor'] ?? $current->proveedor);
         $folio = sanitize_text_field($data['folio'] ?? $current->folio);
+        $usuario_portal = self::normalize_user_key($data['usuario_portal'] ?? $current->usuario_portal);
 
         $fecha_factura = sanitize_text_field($data['fecha_factura'] ?? '');
         $fecha_factura = $fecha_factura !== '' ? $fecha_factura : null;
@@ -940,40 +1441,14 @@ class WPFPP_Facturas_Portal {
         $estado_in = sanitize_text_field($data['estado'] ?? $current->estado);
         $estado = in_array($estado_in, $allowed_states, true) ? $estado_in : (string)$current->estado;
 
-        $now = current_time('mysql');
-
-        // Timestamps según estado (admin puede forzar estados)
-        $assigned_at = $current->assigned_at;
-        $assigned_by = $current->assigned_by;
-        $loaded_at = $current->loaded_at;
-        $loaded_by = $current->loaded_by;
-
-        if ($estado === 'asignado') {
-            if (!$assigned_at) $assigned_at = $now;
-            if (!$assigned_by) $assigned_by = 'Admin';
-        } elseif ($estado === 'pendiente' || $estado === 'duda') {
-            // Reabrir
-            $assigned_at = null;
-            $assigned_by = null;
-            if ($estado !== 'cargada') {
-                $loaded_at = null;
-                $loaded_by = null;
-            }
-        }
-
-        if ($estado === 'cargada') {
-            if (!$loaded_at) $loaded_at = $now;
-            if (!$loaded_by) $loaded_by = 'Admin';
-        } else {
-            // Si sale de cargada, limpia cargada
-            if ($current->estado === 'cargada') {
-                $loaded_at = null;
-                $loaded_by = null;
-            }
-        }
+        // Timestamps consistentes según estado
+        $state_meta = self::state_transition_payload($current, $estado, 'Admin');
+        $assigned_at = $state_meta['assigned_at'];
+        $assigned_by = $state_meta['assigned_by'];
 
         $updated = $wpdb->update($table, [
             'proveedor' => $proveedor,
+            'usuario_portal' => $usuario_portal,
             'folio' => $folio,
             'fecha_factura' => $fecha_factura,
             'monto' => $monto,
@@ -983,16 +1458,13 @@ class WPFPP_Facturas_Portal {
             'estado' => $estado,
             'assigned_at' => $assigned_at,
             'assigned_by' => $assigned_by,
-            'loaded_at' => $loaded_at,
-            'loaded_by' => $loaded_by,
         ], ['id' => $id],
-        ['%s','%s','%s','%f','%s','%s','%s','%s','%s','%s','%s','%s'],
+        ['%s','%s','%s','%s','%f','%s','%s','%s','%s','%s','%s'],
         ['%d']);
 
         if ($updated === false) return false;
         return true;
     }
-
 
     private static function get_facturas($args=[]) {
         global $wpdb;
@@ -1009,6 +1481,11 @@ class WPFPP_Facturas_Portal {
         if (!empty($args['proveedor'])) {
             $where .= " AND proveedor=%s";
             $params[] = $args['proveedor'];
+        }
+
+        if (!empty($args['usuario_portal'])) {
+            $where .= " AND usuario_portal=%s";
+            $params[] = self::normalize_user_key($args['usuario_portal']);
         }
 
         if (!empty($args['q'])) {
@@ -1033,7 +1510,6 @@ class WPFPP_Facturas_Portal {
             $params[] = $dt;
         }
 
-
         $order = !empty($args['order']) ? $args['order'] : 'created_at DESC';
         $limit = !empty($args['limit']) ? (int)$args['limit'] : 200;
         $limit = max(1, min(2000, $limit));
@@ -1045,7 +1521,7 @@ class WPFPP_Facturas_Portal {
         return $wpdb->get_results($sql);
     }
 
-    private static function get_proveedores($estado='', $date_from=null, $date_to=null, $include_no_date=true) {
+    private static function get_proveedores($estado='', $date_from=null, $date_to=null, $include_no_date=true, $usuario_portal='') {
         global $wpdb;
         $table = self::table_name();
 
@@ -1055,6 +1531,11 @@ class WPFPP_Facturas_Portal {
         if ($estado) {
             $where .= " AND estado=%s";
             $params[] = $estado;
+        }
+
+        if ($usuario_portal) {
+            $where .= " AND usuario_portal=%s";
+            $params[] = self::normalize_user_key($usuario_portal);
         }
 
         if ($date_from && $date_to) {
@@ -1072,23 +1553,13 @@ class WPFPP_Facturas_Portal {
         return $wpdb->get_col($sql);
     }
 
-    private static function mark_loaded($ids) {
-        global $wpdb;
-        $table = self::table_name();
-        $ids = array_filter(array_map('intval', $ids));
-        if (!$ids) return;
-        $in = implode(',', array_fill(0, count($ids), '%d'));
-        $now = current_time('mysql');
-        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='cargada', loaded_at=%s, loaded_by=%s WHERE id IN ($in)", array_merge([$now, 'Admin'], $ids)));
-    }
-
     private static function mark_pending($ids) {
         global $wpdb;
         $table = self::table_name();
         $ids = array_filter(array_map('intval', $ids));
         if (!$ids) return;
         $in = implode(',', array_fill(0, count($ids), '%d'));
-        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='pendiente' WHERE id IN ($in)", $ids));
+        $wpdb->query($wpdb->prepare("UPDATE {$table} SET estado='pendiente', assigned_at=NULL, assigned_by=NULL WHERE id IN ($in)", $ids));
     }
 
     private static function delete_facturas($ids) {
@@ -1098,6 +1569,20 @@ class WPFPP_Facturas_Portal {
         if (!$ids) return;
         $in = implode(',', array_fill(0, count($ids), '%d'));
         $wpdb->query($wpdb->prepare("DELETE FROM {$table} WHERE id IN ($in)", $ids));
+    }
+
+    private static function assign_all_facturas_to_user($usuario_portal) {
+        global $wpdb;
+        $table = self::table_name();
+        $usuario_portal = self::normalize_user_key($usuario_portal);
+        if ($usuario_portal === '') return 0;
+
+        $portal_users = self::portal_users_for_select();
+        if (empty($portal_users[$usuario_portal])) return 0;
+
+        $updated = $wpdb->query($wpdb->prepare("UPDATE {$table} SET usuario_portal=%s", $usuario_portal));
+        if ($updated === false) return 0;
+        return (int) $updated;
     }
 }
 
