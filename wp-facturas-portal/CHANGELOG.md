@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.8.2] - 2026-02-17
+### Fixed
+- Se corrige falso negativo al guardar usuarios en Ajustes: si `update_option(...)` retorna `false` porque no hay cambio efectivo, ahora se considera guardado válido y no se muestra error incorrecto.
+- Se refuerza la validación post-guardado comparando el estado re-cargado de `portal_users` para confirmar persistencia real.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.1` a `1.8.2`.
+
 ## [1.8.1] - 2026-02-17
 ### Fixed
 - Se corrige la persistencia de creación/edición/eliminación de usuarios en Ajustes: ahora los cambios se guardan de forma fiable actualizando explícitamente `portal_users` dentro de `wpfp_settings`.

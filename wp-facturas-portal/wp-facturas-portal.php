@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.8.1
+ * Version: 1.8.2
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.8.1';
+    const VERSION = '1.8.2';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -225,9 +225,51 @@ class WPFPP_Facturas_Portal {
 
         $current = get_option(self::OPTION_SETTINGS, []);
         if (!is_array($current)) $current = [];
-        $current['portal_users'] = $clean;
 
-        return (bool) update_option(self::OPTION_SETTINGS, $current, false);
+        $current_users = isset($current['portal_users']) && is_array($current['portal_users']) ? $current['portal_users'] : [];
+        $current_clean = [];
+        foreach ($current_users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '') continue;
+            $current_clean[$key] = [
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        $next_clean = [];
+        foreach ($clean as $u) {
+            $next_clean[$u['key']] = [
+                'name' => $u['name'],
+                'password_hash' => $u['password_hash'],
+            ];
+        }
+
+        if ($current_clean == $next_clean) {
+            return true;
+        }
+
+        $current['portal_users'] = $clean;
+        $updated = update_option(self::OPTION_SETTINGS, $current, false);
+        if ($updated) return true;
+
+        $reloaded = get_option(self::OPTION_SETTINGS, []);
+        if (!is_array($reloaded)) return false;
+        $reloaded_users = isset($reloaded['portal_users']) && is_array($reloaded['portal_users']) ? $reloaded['portal_users'] : [];
+
+        $reloaded_clean = [];
+        foreach ($reloaded_users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '') continue;
+            $reloaded_clean[$key] = [
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        return $reloaded_clean == $next_clean;
     }
 
     public static function table_name() {
