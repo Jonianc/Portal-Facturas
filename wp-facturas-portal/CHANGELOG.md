@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.8.4] - 2026-02-17
+### Fixed
+- Se corrige el flujo de cierre de sesión del portal: al usar `?wpfp_logout=1` ahora se limpia cookie y se redirige inmediatamente a la misma ruta sin el parámetro, evitando quedar bloqueado fuera del login.
+- Se robustece la construcción de URL actual en `current_url_no_post()` para manejar valores faltantes en `$_SERVER`.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.3` a `1.8.4`.
+
 ## [1.8.3] - 2026-02-17
 ### Fixed
 - Se corrige definitivamente la gestión de usuarios en Ajustes: `sanitize_settings()` ahora conserva y sanea `portal_users` cuando la opción se guarda por API, evitando que el callback de sanitización descarte cambios de alta/edición/eliminación.

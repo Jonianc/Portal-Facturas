@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.8.3
+ * Version: 1.8.4
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.8.3';
+    const VERSION = '1.8.4';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -939,6 +939,8 @@ class WPFPP_Facturas_Portal {
         // Logout via query param
         if (isset($_GET['wpfp_logout'])) {
             self::clear_cookie();
+            wp_safe_redirect(remove_query_arg('wpfp_logout', self::current_url_no_post()));
+            exit;
         }
 
         if (!self::is_portal_authed()) {
@@ -1050,7 +1052,7 @@ class WPFPP_Facturas_Portal {
                         <a class="wpfp-switch <?php echo ($view === 'list') ? 'is-active' : ''; ?>" href="<?php echo esc_url($list_url); ?>" role="tab" aria-selected="<?php echo ($view === 'list') ? 'true' : 'false'; ?>">Listado</a>
                         <a class="wpfp-switch <?php echo ($view === 'monthly') ? 'is-active' : ''; ?>" href="<?php echo esc_url($monthly_url); ?>" role="tab" aria-selected="<?php echo ($view === 'monthly') ? 'true' : 'false'; ?>">Mensual</a>
                     </div>
-                    <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout','1')); ?>">Salir</a>
+                    <a class="wpfp-link" href="<?php echo esc_url(add_query_arg('wpfp_logout', '1', remove_query_arg('wpfp_logout', self::current_url_no_post()))); ?>">Salir</a>
                 </div>
             </div>
 
@@ -1199,7 +1201,9 @@ class WPFPP_Facturas_Portal {
     }
 
     private static function current_url_no_post() {
-        $url = (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+        $host = isset($_SERVER['HTTP_HOST']) ? (string)$_SERVER['HTTP_HOST'] : '';
+        $uri = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '/';
+        $url = (is_ssl() ? 'https://' : 'http://') . $host . $uri;
         // remove wpnonce / post vars not in query
         return $url;
     }
