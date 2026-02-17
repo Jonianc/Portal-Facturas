@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.7.1
+ * Version: 1.8.0
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.7.1';
+    const VERSION = '1.8.0';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -562,6 +562,115 @@ class WPFPP_Facturas_Portal {
 
         $bulk_msg = '';
         $bulk_err = '';
+        $user_msg = '';
+        $user_err = '';
+
+        if (!empty($_POST['wpfp_user_action']) && check_admin_referer('wpfp_user_management', 'wpfp_user_management_nonce')) {
+            $action = sanitize_text_field($_POST['wpfp_user_action']);
+            $settings = self::settings();
+            $users = isset($settings['portal_users']) && is_array($settings['portal_users']) ? $settings['portal_users'] : [];
+
+            if ($action === 'add') {
+                $new_key = self::normalize_user_key($_POST['new_user_key'] ?? '');
+                $new_name = sanitize_text_field($_POST['new_user_name'] ?? $new_key);
+                $new_pass = (string)($_POST['new_user_password'] ?? '');
+
+                if ($new_key === '' || $new_pass === '') {
+                    $user_err = 'Para crear usuario debes ingresar usuario (key) y clave.';
+                } else {
+                    $exists = false;
+                    foreach ($users as $u) {
+                        if (self::normalize_user_key($u['key'] ?? '') === $new_key) {
+                            $exists = true;
+                            break;
+                        }
+                    }
+                    if ($exists) {
+                        $user_err = 'Ese usuario ya existe.';
+                    } else {
+                        $users[] = [
+                            'key' => $new_key,
+                            'name' => $new_name !== '' ? $new_name : $new_key,
+                            'password_hash' => wp_hash_password($new_pass),
+                        ];
+                        $settings['portal_users'] = $users;
+                        update_option(self::OPTION_SETTINGS, $settings, false);
+                        $user_msg = sprintf('Usuario %s creado.', $new_key);
+                    }
+                }
+            }
+
+            if ($action === 'update') {
+                $source_key = self::normalize_user_key($_POST['source_user_key'] ?? '');
+                $target_key = self::normalize_user_key($_POST['edit_user_key'] ?? '');
+                $target_name = sanitize_text_field($_POST['edit_user_name'] ?? $target_key);
+                $target_pass = (string)($_POST['edit_user_password'] ?? '');
+
+                if ($source_key === '' || $target_key === '') {
+                    $user_err = 'Debes seleccionar un usuario origen e indicar el usuario destino.';
+                } else {
+                    $found_index = -1;
+                    foreach ($users as $idx => $u) {
+                        if (self::normalize_user_key($u['key'] ?? '') === $source_key) {
+                            $found_index = $idx;
+                            break;
+                        }
+                    }
+
+                    if ($found_index < 0) {
+                        $user_err = 'El usuario a editar no existe.';
+                    } else {
+                        foreach ($users as $idx => $u) {
+                            if ($idx === $found_index) continue;
+                            if (self::normalize_user_key($u['key'] ?? '') === $target_key) {
+                                $user_err = 'El nuevo usuario (key) ya existe.';
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($user_err === '') {
+                        $current_hash = (string)($users[$found_index]['password_hash'] ?? '');
+                        $users[$found_index] = [
+                            'key' => $target_key,
+                            'name' => $target_name !== '' ? $target_name : $target_key,
+                            'password_hash' => $target_pass !== '' ? wp_hash_password($target_pass) : $current_hash,
+                        ];
+
+                        $settings['portal_users'] = array_values($users);
+                        update_option(self::OPTION_SETTINGS, $settings, false);
+                        $user_msg = sprintf('Usuario %s actualizado.', $source_key);
+                    }
+                }
+            }
+
+            if ($action === 'delete') {
+                $delete_key = self::normalize_user_key($_POST['delete_user_key'] ?? '');
+                if ($delete_key === '') {
+                    $user_err = 'Debes seleccionar un usuario para eliminar.';
+                } else {
+                    $new_users = [];
+                    $deleted = false;
+                    foreach ($users as $u) {
+                        $uk = self::normalize_user_key($u['key'] ?? '');
+                        if ($uk === $delete_key) {
+                            $deleted = true;
+                            continue;
+                        }
+                        $new_users[] = $u;
+                    }
+
+                    if (!$deleted) {
+                        $user_err = 'El usuario seleccionado no existe.';
+                    } else {
+                        $settings['portal_users'] = array_values($new_users);
+                        update_option(self::OPTION_SETTINGS, $settings, false);
+                        $user_msg = sprintf('Usuario %s eliminado. Sus facturas quedan sin reasignar.', $delete_key);
+                    }
+                }
+            }
+        }
+
         if (!empty($_POST['wpfp_assign_all_settings']) && check_admin_referer('wpfp_assign_all_settings', 'wpfp_assign_all_settings_nonce')) {
             $target_user = self::normalize_user_key($_POST['assign_all_usuario_portal'] ?? '');
             if ($target_user === '') {
@@ -575,6 +684,8 @@ class WPFPP_Facturas_Portal {
         $settings = self::settings();
         $portal_users = self::portal_users_for_select();
         echo '<div class="wrap"><h1>Ajustes — Portal Facturas</h1>';
+        if ($user_msg) echo '<div class="notice notice-success"><p>'.esc_html($user_msg).'</p></div>';
+        if ($user_err) echo '<div class="notice notice-error"><p>'.esc_html($user_err).'</p></div>';
         if ($bulk_msg) echo '<div class="notice notice-success"><p>'.esc_html($bulk_msg).'</p></div>';
         if ($bulk_err) echo '<div class="notice notice-error"><p>'.esc_html($bulk_err).'</p></div>';
 
@@ -604,16 +715,67 @@ class WPFPP_Facturas_Portal {
         echo '<p class="description"><strong>Importante:</strong> esta ruta no debe coincidir con una página existente de WordPress.</p>';
         echo '<p><a href="'.esc_url($portal_url).'" target="_blank" rel="noopener">Abrir portal</a><br><code>'.esc_html($portal_url).'</code></p></td></tr>';
 
-        $users_preview = '';
-        foreach (self::portal_users() as $u) { $users_preview .= ($users_preview ? "\n" : '') . $u['name'] . ':'; }
-
-        echo '<tr><th><label>Usuarios portal (clave por usuario)</label></th><td>';
-        printf('<textarea name="%s[portal_users_raw]" rows="6" class="large-text" placeholder="cliente-a:ClaveSegura1!\ncliente-b:OtraClave2#">%s</textarea>', esc_attr(self::OPTION_SETTINGS), esc_textarea($users_preview));
-        echo '<p class="description">Formato: <code>usuario:clave</code> (una línea por usuario). Al guardar, las claves se hashean.</p></td></tr>';
+        echo '<tr><th><label>Usuarios portal activos</label></th><td>';
+        if (!$portal_users) {
+            echo '<em>No hay usuarios configurados.</em>';
+        } else {
+            echo '<ul style="margin:0;">';
+            foreach (self::portal_users() as $u) {
+                echo '<li><strong>'.esc_html($u['name']).'</strong> <code>'.esc_html($u['key']).'</code></li>';
+            }
+            echo '</ul>';
+        }
+        echo '</td></tr>';
 
 
         echo '</tbody></table>';
         submit_button('Guardar ajustes');
+        echo '</form>';
+
+        echo '<hr /><h2>Gestión de usuarios portal</h2>';
+        echo '<p class="description">Administra usuarios individuales del portal desde formularios dedicados (alta, edición y eliminación).</p>';
+
+        echo '<form method="post" class="wpfp-form" style="margin-top:16px;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_user_management', 'wpfp_user_management_nonce');
+        echo '<input type="hidden" name="wpfp_user_action" value="add" />';
+        echo '<h3 style="margin-top:0;">Crear usuario</h3>';
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario (key)</label></th><td><input name="new_user_key" class="regular-text" placeholder="cliente-a" required /></td></tr>';
+        echo '<tr><th><label>Nombre visible</label></th><td><input name="new_user_name" class="regular-text" placeholder="Cliente A" /></td></tr>';
+        echo '<tr><th><label>Clave</label></th><td><input name="new_user_password" type="password" class="regular-text" required /></td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button button-primary">Crear usuario</button></p>';
+        echo '</form>';
+
+        echo '<form method="post" class="wpfp-form" style="margin-top:16px;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_user_management', 'wpfp_user_management_nonce');
+        echo '<input type="hidden" name="wpfp_user_action" value="update" />';
+        echo '<h3 style="margin-top:0;">Editar usuario</h3>';
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario a editar</label></th><td><select name="source_user_key" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar —</option>';
+        foreach ($portal_users as $uk=>$uname) echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        echo '</select></td></tr>';
+        echo '<tr><th><label>Nuevo usuario (key)</label></th><td><input name="edit_user_key" class="regular-text" required '.disabled(empty($portal_users), true, false).' /></td></tr>';
+        echo '<tr><th><label>Nuevo nombre visible</label></th><td><input name="edit_user_name" class="regular-text" '.disabled(empty($portal_users), true, false).' /></td></tr>';
+        echo '<tr><th><label>Nueva clave (opcional)</label></th><td><input name="edit_user_password" type="password" class="regular-text" '.disabled(empty($portal_users), true, false).' />';
+        echo '<p class="description">Si la dejas vacía, se mantiene la clave actual.</p></td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button" '.disabled(empty($portal_users), true, false).'>Guardar cambios de usuario</button></p>';
+        echo '</form>';
+
+        echo '<form method="post" class="wpfp-form" style="margin-top:16px;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_user_management', 'wpfp_user_management_nonce');
+        echo '<input type="hidden" name="wpfp_user_action" value="delete" />';
+        echo '<h3 style="margin-top:0;">Eliminar usuario</h3>';
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario a eliminar</label></th><td><select name="delete_user_key" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar —</option>';
+        foreach ($portal_users as $uk=>$uname) echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        echo '</select>';
+        echo '<p class="description">Las facturas quedan con su <code>usuario_portal</code> actual (sin reasignación automática).</p></td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button" '.disabled(empty($portal_users), true, false).' onclick="return confirm(\'¿Eliminar usuario portal seleccionado?\');">Eliminar usuario</button></p>';
         echo '</form>';
 
         echo '<hr /><h2>Asignación masiva de facturas</h2>';

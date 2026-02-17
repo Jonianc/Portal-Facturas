@@ -2,6 +2,16 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.8.0] - 2026-02-17
+### Added
+- Nueva UI de gestión de usuarios en Ajustes para crear, editar y eliminar usuarios portal sin depender del textarea `usuario:clave`.
+- Soporte para editar también el `key` del usuario portal desde Ajustes.
+
+### Changed
+- Se mejora UX en Ajustes con listado visible de usuarios activos y formularios separados por acción (alta/edición/eliminación).
+- Al eliminar usuario, las facturas existentes mantienen su `usuario_portal` (quedan huérfanas hasta reasignación manual), según flujo solicitado.
+- Se actualiza la versión del plugin de `1.7.1` a `1.8.0`.
+
 ## [1.7.1] - 2026-02-17
 ### Fixed
 - Se corrige la compatibilidad de acceso legacy: cuando no hay `portal_users` configurados, el login vuelve a aceptar la clave global existente (`password_hash`) para evitar bloqueo en instalaciones previas.
