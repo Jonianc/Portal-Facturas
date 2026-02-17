@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.8.1] - 2026-02-17
+### Fixed
+- Se corrige la persistencia de creación/edición/eliminación de usuarios en Ajustes: ahora los cambios se guardan de forma fiable actualizando explícitamente `portal_users` dentro de `wpfp_settings`.
+- Se agregan mensajes de error cuando una operación de gestión de usuarios no logra persistirse.
+
+### Changed
+- Se actualiza la versión del plugin de `1.8.0` a `1.8.1`.
+
 ## [1.8.0] - 2026-02-17
 ### Added
 - Nueva UI de gestión de usuarios en Ajustes para crear, editar y eliminar usuarios portal sin depender del textarea `usuario:clave`.

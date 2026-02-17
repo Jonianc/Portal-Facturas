@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.8.0
+ * Version: 1.8.1
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.8.0';
+    const VERSION = '1.8.1';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -204,6 +204,30 @@ class WPFPP_Facturas_Portal {
         $s = get_option(self::OPTION_SETTINGS, []);
         if (!is_array($s)) $s = [];
         return array_merge($defaults, $s);
+    }
+
+    private static function save_portal_users($users) {
+        $users = is_array($users) ? $users : [];
+        $clean = [];
+        $seen = [];
+
+        foreach ($users as $u) {
+            $key = self::normalize_user_key($u['key'] ?? '');
+            $hash = (string)($u['password_hash'] ?? '');
+            if ($key === '' || $hash === '' || isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $clean[] = [
+                'key' => $key,
+                'name' => sanitize_text_field($u['name'] ?? $key),
+                'password_hash' => $hash,
+            ];
+        }
+
+        $current = get_option(self::OPTION_SETTINGS, []);
+        if (!is_array($current)) $current = [];
+        $current['portal_users'] = $clean;
+
+        return (bool) update_option(self::OPTION_SETTINGS, $current, false);
     }
 
     public static function table_name() {
@@ -593,9 +617,11 @@ class WPFPP_Facturas_Portal {
                             'name' => $new_name !== '' ? $new_name : $new_key,
                             'password_hash' => wp_hash_password($new_pass),
                         ];
-                        $settings['portal_users'] = $users;
-                        update_option(self::OPTION_SETTINGS, $settings, false);
-                        $user_msg = sprintf('Usuario %s creado.', $new_key);
+                        if (self::save_portal_users($users)) {
+                            $user_msg = sprintf('Usuario %s creado.', $new_key);
+                        } else {
+                            $user_err = 'No se pudo guardar el usuario. Intenta nuevamente.';
+                        }
                     }
                 }
             }
@@ -637,9 +663,11 @@ class WPFPP_Facturas_Portal {
                             'password_hash' => $target_pass !== '' ? wp_hash_password($target_pass) : $current_hash,
                         ];
 
-                        $settings['portal_users'] = array_values($users);
-                        update_option(self::OPTION_SETTINGS, $settings, false);
-                        $user_msg = sprintf('Usuario %s actualizado.', $source_key);
+                        if (self::save_portal_users(array_values($users))) {
+                            $user_msg = sprintf('Usuario %s actualizado.', $source_key);
+                        } else {
+                            $user_err = 'No se pudo actualizar el usuario. Intenta nuevamente.';
+                        }
                     }
                 }
             }
@@ -663,9 +691,11 @@ class WPFPP_Facturas_Portal {
                     if (!$deleted) {
                         $user_err = 'El usuario seleccionado no existe.';
                     } else {
-                        $settings['portal_users'] = array_values($new_users);
-                        update_option(self::OPTION_SETTINGS, $settings, false);
-                        $user_msg = sprintf('Usuario %s eliminado. Sus facturas quedan sin reasignar.', $delete_key);
+                        if (self::save_portal_users(array_values($new_users))) {
+                            $user_msg = sprintf('Usuario %s eliminado. Sus facturas quedan sin reasignar.', $delete_key);
+                        } else {
+                            $user_err = 'No se pudo eliminar el usuario. Intenta nuevamente.';
+                        }
                     }
                 }
             }
