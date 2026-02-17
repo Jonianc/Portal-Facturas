@@ -2,6 +2,18 @@
 
 Todos los cambios relevantes de este plugin se documentan en este archivo.
 
+## [1.7.1] - 2026-02-17
+### Fixed
+- Se corrige la compatibilidad de acceso legacy: cuando no hay `portal_users` configurados, el login vuelve a aceptar la clave global existente (`password_hash`) para evitar bloqueo en instalaciones previas.
+
+### Added
+- Se agrega acción de asignación masiva global en **Listado admin** para asignar todas las facturas a un usuario portal seleccionado.
+- Se agrega acción de asignación masiva en **Ajustes** para asignar todas las facturas a un usuario portal seleccionado.
+
+### Changed
+- En sesiones legacy, el frontend mantiene comportamiento sin segmentación por `usuario_portal`, preservando compatibilidad hasta migrar a usuarios individuales.
+- Se actualiza la versión del plugin de `1.7.0` a `1.7.1`.
+
 ## [1.7.0] - 2026-02-16
 ### Added
 - Se agrega soporte de usuarios de portal con clave individual gestionados desde Ajustes (`usuario:clave`, una línea por usuario).

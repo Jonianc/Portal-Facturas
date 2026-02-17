@@ -2,14 +2,14 @@
 /**
  * Plugin Name: WP Facturas Portal (Drive)
  * Description: Portal público protegido por clave para gestionar facturas (PDF en Google Drive). El cliente solo escribe observación y la factura pasa a "Asignado" automáticamente.
- * Version: 1.7.0
+ * Version: 1.7.1
  * Author: Rocket Solutions
  */
 
 if (!defined('ABSPATH')) exit;
 
 class WPFPP_Facturas_Portal {
-    const VERSION = '1.7.0';
+    const VERSION = '1.7.1';
     const OPTION_SETTINGS = 'wpfp_settings';
     const OPTION_PLAIN_PASS = 'wpfp_password_plain';
     const COOKIE_NAME = 'wpfp_auth';
@@ -276,6 +276,19 @@ class WPFPP_Facturas_Portal {
     public static function admin_page_list() {
         if (!current_user_can('manage_options')) return;
 
+        $bulk_msg = '';
+        $bulk_err = '';
+
+        if (!empty($_POST['wpfp_assign_all']) && check_admin_referer('wpfp_assign_all_facturas', 'wpfp_assign_all_nonce')) {
+            $target_user = self::normalize_user_key($_POST['assign_all_usuario_portal'] ?? '');
+            if ($target_user === '') {
+                $bulk_err = 'Debes seleccionar un usuario portal para la asignación masiva.';
+            } else {
+                $updated = self::assign_all_facturas_to_user($target_user);
+                $bulk_msg = sprintf('Asignación masiva completada: %d factura(s) asignada(s) a %s.', (int)$updated, $target_user);
+            }
+        }
+
         // Acciones (marcar pendiente / borrar)
         if (!empty($_POST['wpfp_action']) && check_admin_referer('wpfp_admin_action', 'wpfp_nonce')) {
             $action = sanitize_text_field($_POST['wpfp_action']);
@@ -301,8 +314,26 @@ class WPFPP_Facturas_Portal {
 
         $proveedores = self::get_proveedores($estado, null, null, true, $usuario_portal);
         $portal_users = self::portal_users_for_select();
+        if (empty($portal_users)) {
+            $bulk_err = 'No hay usuarios portal configurados. Crea al menos uno en Ajustes.';
+        }
 
         echo '<div class="wrap"><h1>Portal Facturas</h1>';
+        if ($bulk_msg) echo '<div class="notice notice-success"><p>'.esc_html($bulk_msg).'</p></div>';
+        if ($bulk_err) echo '<div class="notice notice-error"><p>'.esc_html($bulk_err).'</p></div>';
+
+        echo '<form method="post" class="wpfp-bulk" style="margin:14px 0;padding:12px;background:#fff;border:1px solid #dcdcde;">';
+        wp_nonce_field('wpfp_assign_all_facturas', 'wpfp_assign_all_nonce');
+        echo '<strong>Asignación masiva global</strong><br>';
+        echo '<span class="description">Asignar todas las facturas existentes a un usuario portal.</span><br><br>';
+        echo '<select name="assign_all_usuario_portal" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar usuario portal —</option>';
+        foreach ($portal_users as $uk=>$uname) {
+            echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        }
+        echo '</select> ';
+        echo '<button class="button" name="wpfp_assign_all" value="1" '.disabled(empty($portal_users), true, false).' onclick="return confirm(\'¿Asignar todas las facturas al usuario seleccionado?\');">Asignar todas</button>';
+        echo '</form>';
 
         echo '<form method="get" class="wpfp-filters">';
         echo '<input type="hidden" name="page" value="wpfp_facturas" />';
@@ -529,8 +560,23 @@ class WPFPP_Facturas_Portal {
     public static function admin_page_settings() {
         if (!current_user_can('manage_options')) return;
 
+        $bulk_msg = '';
+        $bulk_err = '';
+        if (!empty($_POST['wpfp_assign_all_settings']) && check_admin_referer('wpfp_assign_all_settings', 'wpfp_assign_all_settings_nonce')) {
+            $target_user = self::normalize_user_key($_POST['assign_all_usuario_portal'] ?? '');
+            if ($target_user === '') {
+                $bulk_err = 'Debes seleccionar un usuario portal para la asignación masiva.';
+            } else {
+                $updated = self::assign_all_facturas_to_user($target_user);
+                $bulk_msg = sprintf('Asignación masiva completada: %d factura(s) asignada(s) a %s.', (int)$updated, $target_user);
+            }
+        }
+
         $settings = self::settings();
+        $portal_users = self::portal_users_for_select();
         echo '<div class="wrap"><h1>Ajustes — Portal Facturas</h1>';
+        if ($bulk_msg) echo '<div class="notice notice-success"><p>'.esc_html($bulk_msg).'</p></div>';
+        if ($bulk_err) echo '<div class="notice notice-error"><p>'.esc_html($bulk_err).'</p></div>';
 
         echo '<form method="post" action="options.php" class="wpfp-form">';
         settings_fields('wpfp_settings_group');
@@ -568,6 +614,22 @@ class WPFPP_Facturas_Portal {
 
         echo '</tbody></table>';
         submit_button('Guardar ajustes');
+        echo '</form>';
+
+        echo '<hr /><h2>Asignación masiva de facturas</h2>';
+        echo '<form method="post" class="wpfp-form">';
+        wp_nonce_field('wpfp_assign_all_settings', 'wpfp_assign_all_settings_nonce');
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th><label>Usuario destino</label></th><td><select name="assign_all_usuario_portal" required '.disabled(empty($portal_users), true, false).'>';
+        echo '<option value="">— Seleccionar usuario portal —</option>';
+        foreach ($portal_users as $uk=>$uname) {
+            echo '<option value="'.esc_attr($uk).'">'.esc_html($uname).' ('.esc_html($uk).')</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">Esta acción reasigna todas las facturas existentes al usuario seleccionado.</p>';
+        echo '</td></tr>';
+        echo '</tbody></table>';
+        echo '<p><button class="button" name="wpfp_assign_all_settings" value="1" '.disabled(empty($portal_users), true, false).' onclick="return confirm(\'¿Asignar todas las facturas al usuario seleccionado?\');">Asignar todas las facturas</button></p>';
         echo '</form>';
 
         echo '<hr /><h2>Recomendación de seguridad</h2>';
@@ -1259,6 +1321,20 @@ class WPFPP_Facturas_Portal {
         if (!$ids) return;
         $in = implode(',', array_fill(0, count($ids), '%d'));
         $wpdb->query($wpdb->prepare("DELETE FROM {$table} WHERE id IN ($in)", $ids));
+    }
+
+    private static function assign_all_facturas_to_user($usuario_portal) {
+        global $wpdb;
+        $table = self::table_name();
+        $usuario_portal = self::normalize_user_key($usuario_portal);
+        if ($usuario_portal === '') return 0;
+
+        $portal_users = self::portal_users_for_select();
+        if (empty($portal_users[$usuario_portal])) return 0;
+
+        $updated = $wpdb->query($wpdb->prepare("UPDATE {$table} SET usuario_portal=%s", $usuario_portal));
+        if ($updated === false) return 0;
+        return (int) $updated;
     }
 }
 
